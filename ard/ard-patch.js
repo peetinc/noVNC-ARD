@@ -149,11 +149,9 @@ RFB.prototype._negotiateServerInit = function () {
 
     this._fbDepth = 24;
 
-    // Set up R/B swap wrapper on the display instance
-    this._ardSetupDisplayWrapper();
-
     // Send pixel format (upstream default: 32bpp, RedShift=0)
-    // The R/B display wrapper handles the byte-order mismatch
+    // ARD servers respect SetPixelFormat for standard encodings.
+    // ARD-specific decoders (Layer 2+) handle their own color conversion.
     RFB.messages.pixelFormat(this._sock, this._fbDepth, true);
     this._sendEncodings();
 
@@ -320,42 +318,7 @@ RFB.prototype._handleRect = function () {
     return _origHandleRect.call(this);
 };
 
-// ===== (h) Display wrapper for R/B swap =====
-//
-// ARD servers send pixels in BGRA byte order. noVNC's ImageData expects RGBA.
-// Wrapping blitImage and fillRect on the display instance swaps R↔B for all
-// rendering without modifying any upstream decoder.
-
-RFB.prototype._ardSetupDisplayWrapper = function () {
-    const display = this._display;
-    const origBlitImage = display.blitImage.bind(display);
-    const origFillRect = display.fillRect.bind(display);
-
-    display.blitImage = function (x, y, width, height, arr, offset, fromQueue) {
-        // Only swap on first pass; queued data was already swapped when queued
-        if (!fromQueue) {
-            const o = offset || 0;
-            const end = o + width * height * 4;
-            for (let i = o; i < end; i += 4) {
-                const tmp = arr[i];
-                arr[i] = arr[i + 2];
-                arr[i + 2] = tmp;
-            }
-        }
-        return origBlitImage(x, y, width, height, arr, offset, fromQueue);
-    };
-
-    display.fillRect = function (x, y, width, height, color, fromQueue) {
-        if (!fromQueue) {
-            color = [color[2], color[1], color[0]];
-        }
-        return origFillRect(x, y, width, height, color, fromQueue);
-    };
-
-    Log.Info("ARD: Display R/B swap wrapper installed");
-};
-
-// ===== (i) SecurityResult — skip SecurityReason for ARD =====
+// ===== (h) SecurityResult — skip SecurityReason for ARD =====
 //
 // ARD does NOT send a SecurityReason string after a failed SecurityResult.
 // Upstream expects one for version >= 3.8, which would stall forever.
