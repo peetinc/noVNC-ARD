@@ -150,6 +150,12 @@
                 document.getElementById('noVNC_ard_session_dlg').classList.remove('noVNC_open');
                 UI.rfb.selectSessionType(2); // ConnectToVirtualDisplay
             });
+        document.getElementById('noVNC_ard_session_disconnect')
+            .addEventListener('click', (e) => {
+                e.preventDefault();
+                document.getElementById('noVNC_ard_session_dlg').classList.remove('noVNC_open');
+                UI.disconnect();
+            });
 
         // =============================================================
         //  ARD Clipboard Buttons
@@ -594,12 +600,22 @@
                 // Session select event listener
                 UI.rfb.addEventListener('ardsessionselect', (e) => {
                     const infoEl = document.querySelector('.noVNC_session_info');
+                    document.getElementById('noVNC_ard_session_hostname').textContent =
+                        ' ' + (UI.desktopName || '');
                     if (e.detail.hasConsoleUser) {
                         document.getElementById('noVNC_ard_session_username').textContent =
-                            e.detail.username;
+                            e.detail.username + ' ';
                         infoEl.style.display = '';
                     } else {
                         infoEl.style.display = 'none';
+                    }
+                    const authEl = document.querySelector('.noVNC_session_auth');
+                    if (ardReconnectCredentials && ardReconnectCredentials.username) {
+                        document.getElementById('noVNC_ard_session_authuser').textContent =
+                            ' ' + ardReconnectCredentials.username;
+                        authEl.style.display = '';
+                    } else {
+                        authEl.style.display = 'none';
                     }
                     document.getElementById('noVNC_ard_session_dlg').classList.add('noVNC_open');
                 });
@@ -1207,8 +1223,15 @@
 
     <!-- ARD Session Select Dialog -->
     <div id="noVNC_ard_session_dlg" class="noVNC_panel">
-        <div class="noVNC_heading">Choose Session Type</div>
-        <p class="noVNC_session_info">User <strong><span id="noVNC_ard_session_username"></span></strong> is logged in at the console.</p>
+        <div class="noVNC_heading" style="display:flex;justify-content:space-between;align-items:center">
+            Choose Session Type
+            <a href="#" id="noVNC_ard_session_disconnect"
+                style="color:rgba(255,255,255,0.7);text-decoration:none;font-size:1.1em;
+                       line-height:1;padding:0 2px"
+                title="Disconnect">&times;</a>
+        </div>
+        <p class="noVNC_session_info"><strong><span id="noVNC_ard_session_username"></span></strong> is logged in on <strong><span id="noVNC_ard_session_hostname"></span></strong>.</p>
+        <p class="noVNC_session_auth" style="margin:0;font-size:0.85em;color:#666;text-align:center">Connecting as <strong><span id="noVNC_ard_session_authuser"></span></strong></p>
         <div class="button_row">
             <button id="noVNC_ard_session_share_button" class="noVNC_submit">
                 Share Display</button>

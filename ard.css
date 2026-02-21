@@ -16,6 +16,13 @@
 .noVNC_session_info {
     margin: 1em 0;
 }
+#noVNC_ard_session_dlg .button_row {
+    justify-content: flex-end;
+    gap: 14px;
+}
+#noVNC_ard_session_dlg .button_row button {
+    white-space: nowrap;
+}
 
 /* Remote User Avatar */
 #noVNC_ard_user_avatar {
