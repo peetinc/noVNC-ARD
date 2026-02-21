@@ -27,7 +27,14 @@ import { AES128ECB, AES128CBC } from './crypto/aes128.js';
 import { parsePKCS1PublicKey } from './crypto/pkcs1.js';
 import { SHA1 } from './crypto/sha1.js';
 
+import ArdHalftoneDecoder from './decoders/zlib-halftone.js';
+import ArdGray16Decoder from './decoders/zlib-16gray.js';
+import ArdThousandsDecoder from './decoders/zlib-thousands.js';
+
 import {
+    encodingArdHalftone,
+    encodingArdGray16,
+    encodingArdThousands,
     clientInitARD,
     securityTypeRSATunnel,
     serverFlagSessionSelect,
@@ -112,6 +119,11 @@ RFB.prototype._negotiateProtocolVersion = function () {
             this._ardCapabilityBitmap = null;
             this._ardSessionSelectNeeded = false;
             this._ardQualityPreset = 'thousands';
+
+            // Register ARD pixel decoders
+            this._decoders[encodingArdHalftone]  = new ArdHalftoneDecoder();
+            this._decoders[encodingArdGray16]    = new ArdGray16Decoder();
+            this._decoders[encodingArdThousands] = new ArdThousandsDecoder();
             this._ardControlMode = this._ardControlMode ?? 1; // 0=observe, 1=control, 2=exclusive
             this._ardClipboardSessionId = 0;
 
@@ -375,25 +387,34 @@ RFB.prototype._sendEncodings = function () {
 
     const encs = [];
 
-    // Data encodings — standard only for Layer 1
+    // Data encodings per quality preset — order matters: server uses first supported
+    const presetEncodings = {
+        halftone:  [encodingArdHalftone, encodings.encodingZRLE, encodings.encodingZlib, encodings.encodingRaw],
+        gray:      [encodingArdGray16, encodings.encodingZRLE, encodings.encodingZlib, encodings.encodingRaw],
+        thousands: [encodingArdThousands, encodings.encodingZRLE, encodings.encodingZlib, encodings.encodingRaw],
+        millions:  [encodings.encodingZRLE, encodings.encodingZlib, encodings.encodingRaw],
+    };
+    const imageEncs = presetEncodings[this._ardQualityPreset] || presetEncodings.thousands;
+    for (const enc of imageEncs) {
+        encs.push(enc);
+    }
+
+    // Standard fallback data encodings
     encs.push(encodings.encodingCopyRect);
-    encs.push(encodings.encodingZlib);
-    encs.push(encodings.encodingZRLE);
     encs.push(encodings.encodingHextile);
     encs.push(encodings.encodingRRE);
-    encs.push(encodings.encodingRaw);
 
     // ARD pseudo-encodings
-    encs.push(pseudoEncodingArdCursorPos);          // 1100
-    encs.push(pseudoEncodingArdDisplayInfo);        // 1101
-    encs.push(pseudoEncodingArdUserInfo);           // 1102
+    encs.push(pseudoEncodingArdCursorPos);
+    encs.push(pseudoEncodingArdDisplayInfo);
+    encs.push(pseudoEncodingArdUserInfo);
     if (this._ardEncryptionMode === 2) {
-        encs.push(pseudoEncodingArdSessionEncryption); // 1103
+        encs.push(pseudoEncodingArdSessionEncryption);
     }
-    encs.push(pseudoEncodingArdCursorAlpha);        // 1104
-    encs.push(pseudoEncodingArdDisplayInfo2);       // 1105
-    encs.push(pseudoEncodingArdDeviceInfo);         // 1107
-    encs.push(pseudoEncodingArdKeyboardInput);      // 1109
+    encs.push(pseudoEncodingArdCursorAlpha);
+    encs.push(pseudoEncodingArdDisplayInfo2);
+    encs.push(pseudoEncodingArdDeviceInfo);
+    encs.push(pseudoEncodingArdKeyboardInput);
 
     // Standard pseudo-encodings
     encs.push(encodings.pseudoEncodingDesktopSize);
@@ -1176,6 +1197,46 @@ Object.defineProperty(RFB.prototype, 'ardControlMode', {
         }
     }
 });
+
+// ===== Public getter/setter: ardQualityPreset =====
+
+Object.defineProperty(RFB.prototype, 'ardQualityPreset', {
+    get() { return this._ardQualityPreset; },
+    set(preset) {
+        const valid = ['halftone', 'gray', 'thousands', 'millions'];
+        if (!valid.includes(preset)) return;
+        if (this._ardQualityPreset === preset) return;
+        this._ardQualityPreset = preset;
+        if (this._rfbConnectionState === 'connected' && this._rfbAppleARD) {
+            this._ardQualitySwitch();
+        }
+    }
+});
+
+RFB.prototype._ardQualitySwitch = function () {
+    this._sendEncodings();
+    RFB.messages.ardSetDisplay(this._sock);
+    if (this._fbWidth > 0 && this._fbHeight > 0) {
+        RFB.messages.fbUpdateRequest(this._sock, false, 0, 0, this._fbWidth, this._fbHeight);
+        RFB.messages.ardAutoFBUpdate(this._sock, 1, 0, 0, this._fbWidth, this._fbHeight);
+    }
+    this._sock.flush();
+    Log.Info("ARD: Quality switch (preset=" + this._ardQualityPreset + ")");
+    ardUpdateInfoPanel(this);
+};
+
+// ===== Public method: requestFullUpdate =====
+
+RFB.prototype.requestFullUpdate = function () {
+    if (this._rfbConnectionState !== 'connected') return;
+    if (this._rfbAppleARD) {
+        this._ardRequestFullUpdate(this._fbWidth, this._fbHeight);
+    } else {
+        RFB.messages.fbUpdateRequest(this._sock, false, 0, 0,
+                                     this._fbWidth, this._fbHeight);
+    }
+    this._sock.flush();
+};
 
 // ===== (g) FBU pseudo-encoding dispatch =====
 
@@ -2031,6 +2092,8 @@ function ardUpdateInfoPanel(rfb) {
         ? rfb._ardDisplays.map(d => d.w + 'x' + d.h).join(', ') : '—');
     set('ard_info_encryption', rfb._ardEncryptionEnabled
         ? 'AES-128-CBC' : (rfb._ardAuthKey ? 'Keystroke only' : 'None'));
+    const qualityLabels = { halftone: 'Halftone', gray: 'Gray16', thousands: 'Thousands', millions: 'Full Color' };
+    set('ard_info_quality', qualityLabels[rfb._ardQualityPreset] || rfb._ardQualityPreset);
     const modeLabels = { 0: 'Observe', 1: 'Control', 2: 'Exclusive' };
     set('ard_info_mode', modeLabels[rfb._ardControlMode] || 'Control');
     const sessionLabels = { 0: 'Request Console', 1: 'Share Display', 2: 'Virtual Display' };

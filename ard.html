@@ -38,6 +38,7 @@
 
         import UI from "./noVNC/app/ui.js";
         import * as Log from './noVNC/core/util/logging.js';
+        import { encodingArdHalftone, encodingArdGray16, encodingArdThousands } from './ard/ard-constants.js';
 
         let response;
 
@@ -95,6 +96,11 @@
         const virtualLoginParam = parseInt(getParamCI('virtualLogin'), 10);
         const ardVirtualLogin = (virtualLoginParam === 0 || virtualLoginParam === 2)
             ? virtualLoginParam : 1;
+
+        // ardQuality: halftone, gray, thousands (default), millions
+        const ardQualityParam = getParamCI('ardQuality');
+        const ardInitialQuality = ['halftone', 'gray', 'thousands', 'millions'].includes(ardQualityParam)
+            ? ardQualityParam : 'thousands';
 
         // ardControlMode: 0=observe, 1=shared control (default), 2=exclusive
         const ardControlModeParam = parseInt(getParamCI('ardControlMode'), 10);
@@ -392,6 +398,98 @@
                 }
             });
 
+        // Quality selector — button toggles panel, track handles drag
+        document.getElementById('noVNC_quality_button')
+            .addEventListener('click', () => {
+                const panel = document.getElementById('noVNC_quality_panel');
+                const btn = document.getElementById('noVNC_quality_button');
+                if (panel.classList.contains('noVNC_open')) {
+                    panel.classList.remove('noVNC_open');
+                    btn.classList.remove('noVNC_selected');
+                } else {
+                    panel.classList.add('noVNC_open');
+                    btn.classList.add('noVNC_selected');
+                    ardSyncQualityStops();
+                }
+            });
+
+        function ardSyncQualityStops() {
+            const preset = (UI.rfb && UI.rfb._rfbAppleARD)
+                ? UI.rfb.ardQualityPreset : ardInitialQuality;
+            ardShowQualityPreview(preset);
+        }
+
+        function ardShowQualityPreview(preset) {
+            document.querySelectorAll('.noVNC_quality_stop')
+                .forEach((s) => {
+                    s.classList.toggle('noVNC_active',
+                                       s.dataset.preset === preset);
+                });
+        }
+
+        function ardQualityFromY(track, clientY) {
+            const rect = track.getBoundingClientRect();
+            const ratio = (clientY - rect.top) / rect.height;
+            const clamped = Math.max(0, Math.min(1, ratio));
+            const presets = ['millions', 'thousands', 'gray', 'halftone'];
+            const idx = Math.min(presets.length - 1,
+                                  Math.floor(clamped * presets.length));
+            return presets[idx];
+        }
+
+        document.getElementById('noVNC_quality_track')
+            .addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const track = document.getElementById('noVNC_quality_track');
+                track.setPointerCapture(e.pointerId);
+
+                let pending = ardQualityFromY(track, e.clientY);
+                ardShowQualityPreview(pending);
+
+                const onMove = (ev) => {
+                    ev.preventDefault();
+                    pending = ardQualityFromY(track, ev.clientY);
+                    ardShowQualityPreview(pending);
+                };
+                const onUp = (ev) => {
+                    pending = ardQualityFromY(track, ev.clientY);
+                    if (UI.rfb && UI.rfb._rfbAppleARD) {
+                        UI.rfb.ardQualityPreset = pending;
+                    }
+                    ardSyncQualityStops();
+                    track.releasePointerCapture(ev.pointerId);
+                    track.removeEventListener('pointermove', onMove);
+                    track.removeEventListener('pointerup', onUp);
+                    track.removeEventListener('lostpointercapture', onUp);
+                };
+
+                track.addEventListener('pointermove', onMove);
+                track.addEventListener('pointerup', onUp);
+                track.addEventListener('lostpointercapture', onUp);
+            });
+
+        // =============================================================
+        //  Double-backtick → full framebuffer refresh
+        // =============================================================
+        // First tap passes through normally; second tap within 300 ms
+        // is intercepted (not forwarded to the remote) and fires
+        // requestFullUpdate.
+
+        let lastBacktickMs = 0;
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== '`') return;
+            const now = Date.now();
+            const elapsed = now - lastBacktickMs;
+            lastBacktickMs = now;
+            if (elapsed < 300 && UI.rfb) {
+                e.stopPropagation();
+                e.preventDefault();
+                lastBacktickMs = 0; // reset so triple-tap doesn't re-fire
+                UI.rfb.requestFullUpdate();
+            }
+        }, true); // capture phase — fires before rfb canvas handler
+
         // =============================================================
         //  Wrap UI.connect — add ARD event listeners
         // =============================================================
@@ -401,8 +499,9 @@
             _origUIConnect.call(UI, evt, password);
             ardInhibitReconnect = false;
             if (UI.rfb) {
-                // Apply virtualLogin setting and initial control mode
+                // Apply virtualLogin setting, initial quality, and initial control mode
                 UI.rfb._ardVirtualLogin = ardVirtualLogin;
+                UI.rfb._ardQualityPreset = ardInitialQuality;
                 UI.rfb._ardControlMode = ardInitialControlMode;
 
                 // Session select event listener
@@ -489,11 +588,13 @@
                 UI.closeControlbarTimeout = null;
                 return;
             }
-            // Close ARD info panel when control bar closes
+            // Close ARD panels when control bar closes
             if (ardInfoPanel) {
                 ardInfoPanel.classList.remove('noVNC_open');
                 ardInfoBtn.classList.remove('noVNC_selected');
             }
+            document.getElementById('noVNC_quality_panel').classList.remove('noVNC_open');
+            document.getElementById('noVNC_quality_button').classList.remove('noVNC_selected');
             _origCloseControlbar.call(UI);
         };
 
@@ -508,6 +609,8 @@
                 ardApplyMacKeyLabels();
                 ardUpdateClipboardButtons(true);
                 ardUpdateControlSettings();
+                document.getElementById('noVNC_quality_button').classList.remove('noVNC_hidden');
+                ardSyncQualityStops();
             }
         };
 
@@ -538,6 +641,9 @@
             // Reset exclusive control UI
             document.getElementById('noVNC_ard_exclusive_row').classList.add('noVNC_hidden');
             document.getElementById('noVNC_setting_exclusive_control').checked = false;
+            document.getElementById('noVNC_quality_button').classList.add('noVNC_hidden');
+            document.getElementById('noVNC_quality_panel').classList.remove('noVNC_open');
+            document.getElementById('noVNC_quality_button').classList.remove('noVNC_selected');
             const wasConnected = UI.connected;
             const isARD = wasConnected && ardReconnectCredentials !== null;
 
@@ -718,6 +824,27 @@
                 </svg>
             </button>
 
+            <!-- ARD quality selector -->
+            <input type="image" alt="Image quality" src="ard/images/quality.svg"
+                id="noVNC_quality_button" class="noVNC_button noVNC_hidden"
+                title="Image quality">
+            <div class="noVNC_vcenter">
+            <div id="noVNC_quality_panel" class="noVNC_panel">
+                <div id="noVNC_quality_wrap">
+                    <img src="ard/images/quality-high.svg" alt="High"
+                        class="noVNC_quality_icon">
+                    <div id="noVNC_quality_track">
+                        <div class="noVNC_quality_stop" data-preset="millions"></div>
+                        <div class="noVNC_quality_stop" data-preset="thousands"></div>
+                        <div class="noVNC_quality_stop" data-preset="gray"></div>
+                        <div class="noVNC_quality_stop" data-preset="halftone"></div>
+                    </div>
+                    <img src="ard/images/quality-low.svg" alt="Low"
+                        class="noVNC_quality_icon">
+                </div>
+            </div>
+            </div>
+
             <!-- Toggle fullscreen -->
             <input type="image" alt="Full screen" src="noVNC/app/images/fullscreen.svg"
                 id="noVNC_fullscreen_button" class="noVNC_button noVNC_hidden"
@@ -878,6 +1005,7 @@
                     <tr><td>Resolution</td><td id="ard_info_resolution">—</td></tr>
                     <tr><td>Displays</td><td id="ard_info_displays">—</td></tr>
                     <tr><td>Encryption</td><td id="ard_info_encryption">—</td></tr>
+                    <tr><td>Quality</td><td id="ard_info_quality">—</td></tr>
                     <tr><td>Mode</td><td id="ard_info_mode">—</td></tr>
                     <tr><td>Session</td><td id="ard_info_session">—</td></tr>
                     <tr><td>Remote User</td><td id="ard_info_user">—</td></tr>
