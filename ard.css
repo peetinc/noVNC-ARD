@@ -17,6 +17,44 @@
     margin: 1em 0;
 }
 
+/* Remote User Avatar */
+#noVNC_ard_user_avatar {
+    padding: 4px;
+    overflow: hidden;
+}
+#noVNC_ard_user_avatar_img {
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+    display: block;
+}
+
+/* ARD toolbar icon buttons (clipboard) */
+.noVNC_icon_btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    color: rgba(255, 255, 255, 0.8);
+    line-height: 0;
+}
+.noVNC_icon_btn svg {
+    width: 24px;
+    height: 24px;
+    display: block;
+}
+.noVNC_icon_btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+#noVNC_clipboard_sync_button:not(.noVNC_selected):not(:disabled) {
+    opacity: 0.4;
+}
+.noVNC_icon_btn:not(:disabled):hover {
+    color: #fff;
+    opacity: 1;
+}
+
 /* Connection Info Panel */
 #ard_info_panel {
     min-width: 220px;

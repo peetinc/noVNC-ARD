@@ -112,6 +112,7 @@ RFB.prototype._negotiateProtocolVersion = function () {
             this._ardCapabilityBitmap = null;
             this._ardSessionSelectNeeded = false;
             this._ardQualityPreset = 'thousands';
+            this._ardControlMode = this._ardControlMode ?? 1; // 0=observe, 1=control, 2=exclusive
             this._ardClipboardSessionId = 0;
 
             // Session Select state
@@ -127,6 +128,7 @@ RFB.prototype._negotiateProtocolVersion = function () {
             // Display/User info
             this._ardDisplays = [];
             this._ardRemoteUser = '';
+            this._ardUserAvatarPng = null;
             this._ardDeviceInfo = null;
             this._ardKeyboardInput = null;
 
@@ -335,7 +337,7 @@ RFB.prototype._negotiateServerInit = function () {
     // → SetEncodings → PixelFormat → SetEncodings
     // → SetEncryption → FBUpdateRequest
     RFB.messages.ardViewerInfo(this._sock);
-    RFB.messages.ardSetMode(this._sock, 1);
+    RFB.messages.ardSetMode(this._sock, this._ardControlMode || 1);
     RFB.messages.ardSetDisplay(this._sock);
     RFB.messages.ardAutoPasteboard(this._sock, 1);
     this._sendEncodings();
@@ -791,7 +793,7 @@ RFB.prototype._ardPostSessionInit = function () {
 
     // Same init order as normal path
     RFB.messages.ardViewerInfo(this._sock);
-    RFB.messages.ardSetMode(this._sock, 1);
+    RFB.messages.ardSetMode(this._sock, this._ardControlMode || 1);
     RFB.messages.ardSetDisplay(this._sock);
     RFB.messages.ardAutoPasteboard(this._sock, 1);
     this._sendEncodings();
@@ -894,15 +896,47 @@ RFB.prototype._ardHandleUserInfo = function () {
         : '';
     this._sock.rQskipBytes(4); // imageSize
     this._sock.rQskipBytes(4); // imageEnc
-    if (imageSize > 0) {
-        this._sock.rQskipBytes(imageSize); // skip image data
+
+    if (imageSize > 1024 * 1024) {
+        Log.Warn("ARD: UserInfo avatar too large (" + imageSize + " bytes), skipping");
+        this._sock.rQskipBytes(imageSize);
+        this._ardUserAvatarPng = null;
+    } else if (imageSize > 0) {
+        const compressedBytes = this._sock.rQshiftBytes(imageSize);
+
+        // ARD sends zlib-compressed PNG — decompress with progressively larger buffers
+        const inflator = new Inflator();
+        inflator.setInput(compressedBytes);
+        let pngBytes;
+        try {
+            for (const size of [4096, 8192, 16384, 32768]) {
+                try {
+                    pngBytes = inflator.inflate(size);
+                    break;
+                } catch (e) {
+                    if (e.message !== "Incomplete zlib block") throw e;
+                    inflator.reset();
+                    inflator.setInput(compressedBytes);
+                }
+            }
+        } finally {
+            inflator.setInput(null);
+        }
+
+        if (!pngBytes) {
+            Log.Warn("ARD: UserInfo avatar decompression failed");
+        }
+        this._ardUserAvatarPng = pngBytes || null;
+    } else {
+        this._ardUserAvatarPng = null;
     }
 
     this._ardRemoteUser = username;
-    Log.Info("ARD: UserInfo — user=" + username);
+    Log.Info("ARD: UserInfo — user=" + (username || "(none — login window)") +
+             " avatarSize=" + (imageSize > 0 ? imageSize + "b" : "none"));
 
     this.dispatchEvent(new CustomEvent("arduserinfo", {
-        detail: { username }
+        detail: { username, hasAvatar: imageSize > 0 }
     }));
 
     ardUpdateInfoPanel(this);
@@ -1105,6 +1139,43 @@ RFB.prototype.clipboardPasteFrom = function (text) {
     }
     return _origClipboardPasteFrom.call(this, text);
 };
+
+// ===== Public API wrappers for UI =====
+
+// Send local clipboard text to remote via ARD protocol
+RFB.prototype.forceClipboardPaste = function (text) {
+    if (!this._rfbAppleARD || this._rfbConnectionState !== 'connected' || this._viewOnly) { return; }
+    this._ardClipboardOutgoing = text;
+    this._ardSendClipboard(text);
+};
+
+// Request clipboard contents from remote
+RFB.prototype.requestRemoteClipboard = function () {
+    if (!this._rfbAppleARD || this._rfbConnectionState !== 'connected') { return; }
+    RFB.messages.ardClipboardRequest(this._sock, 0, this._ardClipboardSessionId);
+};
+
+// Enable or disable automatic clipboard synchronization
+RFB.prototype.enableClipboardSync = function (enabled) {
+    if (!this._rfbAppleARD || this._rfbConnectionState !== 'connected') { return; }
+    RFB.messages.ardAutoPasteboard(this._sock, enabled ? 1 : 0);
+};
+
+// ===== Public getter/setter: ardControlMode =====
+
+Object.defineProperty(RFB.prototype, 'ardControlMode', {
+    get() { return this._ardControlMode; },
+    set(mode) {
+        if (mode !== 0 && mode !== 1 && mode !== 2) return;
+        this._ardControlMode = mode;
+        this._viewOnly = (mode === 0);
+        if (this._rfbConnectionState === 'connected' && this._rfbAppleARD) {
+            RFB.messages.ardSetMode(this._sock, mode);
+            this._sock.flush();
+            ardUpdateInfoPanel(this);
+        }
+    }
+});
 
 // ===== (g) FBU pseudo-encoding dispatch =====
 
@@ -1960,7 +2031,8 @@ function ardUpdateInfoPanel(rfb) {
         ? rfb._ardDisplays.map(d => d.w + 'x' + d.h).join(', ') : '—');
     set('ard_info_encryption', rfb._ardEncryptionEnabled
         ? 'AES-128-CBC' : (rfb._ardAuthKey ? 'Keystroke only' : 'None'));
-    set('ard_info_mode', rfb._viewOnly ? 'Observe' : 'Control');
+    const modeLabels = { 0: 'Observe', 1: 'Control', 2: 'Exclusive' };
+    set('ard_info_mode', modeLabels[rfb._ardControlMode] || 'Control');
     const sessionLabels = { 0: 'Request Console', 1: 'Share Display', 2: 'Virtual Display' };
     set('ard_info_session', rfb._ardSessionType !== null
         ? sessionLabels[rfb._ardSessionType] || 'Unknown (' + rfb._ardSessionType + ')'

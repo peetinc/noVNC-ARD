@@ -66,6 +66,12 @@
             Log.Error("Couldn't fetch mandatory.json: " + err);
         }
 
+        // ── ARD sidebar feature toggles ──────────────────────
+        // Set any to false to hide that control from the sidebar.
+        const showArdUserAvatar    = true;  // macOS user icon + login tooltip
+        const showArdClipboard     = true;  // clipboard buttons (if false, auto-sync stays on)
+        // ────────────────────────────────────────────────────
+
         UI.start({ settings: { defaults: defaults,
                                mandatory: mandatory } });
 
@@ -89,6 +95,10 @@
         const virtualLoginParam = parseInt(getParamCI('virtualLogin'), 10);
         const ardVirtualLogin = (virtualLoginParam === 0 || virtualLoginParam === 2)
             ? virtualLoginParam : 1;
+
+        // ardControlMode: 0=observe, 1=shared control (default), 2=exclusive
+        const ardControlModeParam = parseInt(getParamCI('ardControlMode'), 10);
+        const ardInitialControlMode = [0, 1, 2].includes(ardControlModeParam) ? ardControlModeParam : 1;
 
         // ARD info panel toggle — use noVNC's class-based panel system
         const ardInfoBtn = document.getElementById('ard_info_button');
@@ -121,6 +131,171 @@
                 document.getElementById('noVNC_ard_session_dlg').classList.remove('noVNC_open');
                 UI.rfb.selectSessionType(2); // ConnectToVirtualDisplay
             });
+
+        // =============================================================
+        //  ARD Clipboard Buttons
+        // =============================================================
+
+        let ardClipboardSyncEnabled = true; // matches init default (AutoPasteboard ON)
+
+        function ardUpdateClipboardButtons(connected) {
+            const isARD = connected && UI.rfb && UI.rfb._rfbAppleARD;
+            const showClip = isARD && showArdClipboard;
+            const syncBtn = document.getElementById('noVNC_clipboard_sync_button');
+            const sendBtn = document.getElementById('noVNC_clipboard_send_button');
+            const getBtn  = document.getElementById('noVNC_clipboard_get_button');
+
+            // Show ARD buttons, hide legacy clipboard panel button
+            syncBtn.classList.toggle('noVNC_hidden', !showClip);
+            sendBtn.classList.toggle('noVNC_hidden', !showClip);
+            getBtn.classList.toggle('noVNC_hidden', !showClip);
+            document.getElementById('noVNC_clipboard_button')
+                .classList.toggle('noVNC_hidden', !!isARD);
+
+            syncBtn.disabled = !isARD;
+            if (isARD) {
+                syncBtn.classList.toggle('noVNC_selected', ardClipboardSyncEnabled);
+            }
+            const sendGetEnabled = isARD && !ardClipboardSyncEnabled;
+            sendBtn.disabled = !sendGetEnabled;
+            getBtn.disabled = !sendGetEnabled;
+            if (!connected) {
+                ardClipboardSyncEnabled = true;
+                syncBtn.classList.remove('noVNC_selected');
+            }
+        }
+
+        function ardToggleClipboardSync() {
+            ardClipboardSyncEnabled = !ardClipboardSyncEnabled;
+            const syncActive = ardClipboardSyncEnabled;
+            const btn = document.getElementById('noVNC_clipboard_sync_button');
+            btn.classList.toggle('noVNC_selected', syncActive);
+            btn.title = syncActive ? 'Disable clipboard auto-sync' : 'Enable clipboard auto-sync';
+            document.getElementById('noVNC_clipboard_send_button').disabled = syncActive;
+            document.getElementById('noVNC_clipboard_get_button').disabled = syncActive;
+            if (UI.rfb) UI.rfb.enableClipboardSync(syncActive);
+        }
+
+        // Clipboard button event handlers
+        document.getElementById('noVNC_clipboard_send_button')
+            .addEventListener('click', async () => {
+                if (!UI.rfb) return;
+                let text;
+                try {
+                    text = await navigator.clipboard.readText();
+                } catch (e) {
+                    // Clipboard API unavailable — fall back to textarea
+                    text = document.getElementById('noVNC_clipboard_text').value;
+                }
+                UI.rfb.forceClipboardPaste(text);
+            });
+        document.getElementById('noVNC_clipboard_get_button')
+            .addEventListener('click', () => {
+                if (UI.rfb) UI.rfb.requestRemoteClipboard();
+            });
+        document.getElementById('noVNC_clipboard_sync_button')
+            .addEventListener('click', ardToggleClipboardSync);
+
+        // =============================================================
+        //  ARD Remote User Avatar
+        // =============================================================
+
+        function ardShowAvatar(src, title) {
+            const div = document.getElementById('noVNC_ard_user_avatar');
+            const img = document.getElementById('noVNC_ard_user_avatar_img');
+            img.src = src;
+            div.title = title;
+            div.classList.remove('noVNC_hidden');
+        }
+
+        function ardHideAvatar() {
+            const div = document.getElementById('noVNC_ard_user_avatar');
+            const img = document.getElementById('noVNC_ard_user_avatar_img');
+            div.classList.add('noVNC_hidden');
+            img.removeAttribute('src');
+            div.title = '';
+        }
+
+        function ardHandleUserInfo() {
+            if (!showArdUserAvatar || !UI.rfb) {
+                ardHideAvatar();
+                return;
+            }
+
+            const username = UI.rfb._ardRemoteUser || '';
+            const useGenericIcon = !username ||
+                username.toLowerCase() === 'system administrator';
+
+            if (useGenericIcon) {
+                ardShowAvatar('ard/images/user.svg', username || 'Login window');
+                return;
+            }
+
+            if (UI.rfb._ardUserAvatarPng) {
+                const data = UI.rfb._ardUserAvatarPng;
+
+                // Check PNG signature: 89 50 4E 47
+                const isPNG = data.length > 8 &&
+                    data[0] === 0x89 && data[1] === 0x50 &&
+                    data[2] === 0x4E && data[3] === 0x47;
+
+                if (isPNG) {
+                    // ARD sends PNG with BGRA channel order — decode to canvas,
+                    // swap R↔B, then export as corrected PNG for display.
+                    const blob = new Blob([data], { type: 'image/png' });
+                    const url = URL.createObjectURL(blob);
+                    const tmpImg = new Image();
+                    tmpImg.onload = function () {
+                        URL.revokeObjectURL(url);
+                        const canvas = document.createElement('canvas');
+                        canvas.width = tmpImg.width;
+                        canvas.height = tmpImg.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(tmpImg, 0, 0);
+                        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        const px = imgData.data;
+                        for (let i = 0; i < px.length; i += 4) {
+                            const tmp = px[i];
+                            px[i] = px[i + 2];
+                            px[i + 2] = tmp;
+                        }
+                        ctx.putImageData(imgData, 0, 0);
+                        ardShowAvatar(canvas.toDataURL('image/png'),
+                            username + ' is signed in');
+                    };
+                    tmpImg.onerror = function () {
+                        URL.revokeObjectURL(url);
+                        ardShowAvatar('ard/images/user.svg', username + ' is signed in');
+                    };
+                    tmpImg.src = url;
+                } else {
+                    // Raw pixel data — BGRA (alpha=0xFF) or RGBA
+                    const isBGRA = data[3] === 0xFF;
+                    const size = Math.sqrt(data.length / 4);
+                    if (size % 1 === 0) {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = size;
+                        canvas.height = size;
+                        const ctx = canvas.getContext('2d', { alpha: false });
+                        const imageData = ctx.createImageData(size, size);
+                        for (let i = 0; i < data.length; i += 4) {
+                            imageData.data[i]     = data[i + (isBGRA ? 2 : 0)];
+                            imageData.data[i + 1] = data[i + 1];
+                            imageData.data[i + 2] = data[i + (isBGRA ? 0 : 2)];
+                            imageData.data[i + 3] = 255;
+                        }
+                        ctx.putImageData(imageData, 0, 0);
+                        ardShowAvatar(canvas.toDataURL('image/png'),
+                            username + ' is signed in');
+                    } else {
+                        ardShowAvatar('ard/images/user.svg', username + ' is signed in');
+                    }
+                }
+            } else {
+                // Real user but no avatar data — show generic icon
+                ardShowAvatar('ard/images/user.svg', username + ' is signed in');
+            }
+        }
 
         // =============================================================
         //  ARD Auto-Reconnect State
@@ -161,6 +336,63 @@
         };
 
         // =============================================================
+        //  ARD Control Mode UI
+        // =============================================================
+
+        function ardSetControlModeUI(mode) {
+            document.getElementById('noVNC_setting_shared').checked = (mode === 1);
+            document.getElementById('noVNC_setting_view_only').checked = (mode === 0);
+            document.getElementById('noVNC_setting_exclusive_control').checked = (mode === 2);
+            if (UI.rfb && UI.rfb._rfbAppleARD) {
+                UI.rfb.ardControlMode = mode;
+            }
+            // Hide keyboard + extra keys buttons in Observe mode
+            document.getElementById('noVNC_keyboard_button')
+                .classList.toggle('noVNC_hidden', mode === 0);
+            document.getElementById('noVNC_toggle_extra_keys_button')
+                .classList.toggle('noVNC_hidden', mode === 0);
+        }
+
+        function ardUpdateControlSettings() {
+            if (UI.rfb && UI.rfb._rfbAppleARD) {
+                document.getElementById('noVNC_ard_exclusive_row')
+                    .classList.remove('noVNC_hidden');
+                // Re-enable shared checkbox (upstream disables it on connect)
+                document.getElementById('noVNC_setting_shared').disabled = false;
+                ardSetControlModeUI(ardInitialControlMode);
+            }
+        }
+
+        // Exclusive control checkbox
+        document.getElementById('noVNC_setting_exclusive_control')
+            .addEventListener('change', () => {
+                if (!UI.rfb || !UI.rfb._rfbAppleARD) return;
+                const checked = document.getElementById('noVNC_setting_exclusive_control').checked;
+                ardSetControlModeUI(checked ? 2 : 1);
+            });
+
+        // Wrap upstream View Only handler — intercept for ARD control modes
+        const _origUpdateViewOnly = UI.updateViewOnly;
+        UI.updateViewOnly = function () {
+            if (UI.rfb && UI.rfb._rfbAppleARD) {
+                const viewOnly = document.getElementById('noVNC_setting_view_only').checked;
+                ardSetControlModeUI(viewOnly ? 0 : 1);
+                return;
+            }
+            _origUpdateViewOnly.call(UI);
+        };
+
+        // Shared mode checkbox — when checked, switch to mode 1
+        document.getElementById('noVNC_setting_shared')
+            .addEventListener('change', () => {
+                if (!UI.rfb || !UI.rfb._rfbAppleARD) return;
+                const checked = document.getElementById('noVNC_setting_shared').checked;
+                if (checked) {
+                    ardSetControlModeUI(1);
+                }
+            });
+
+        // =============================================================
         //  Wrap UI.connect — add ARD event listeners
         // =============================================================
 
@@ -169,8 +401,9 @@
             _origUIConnect.call(UI, evt, password);
             ardInhibitReconnect = false;
             if (UI.rfb) {
-                // Apply virtualLogin setting
+                // Apply virtualLogin setting and initial control mode
                 UI.rfb._ardVirtualLogin = ardVirtualLogin;
+                UI.rfb._ardControlMode = ardInitialControlMode;
 
                 // Session select event listener
                 UI.rfb.addEventListener('ardsessionselect', (e) => {
@@ -184,6 +417,9 @@
                     }
                     document.getElementById('noVNC_ard_session_dlg').classList.add('noVNC_open');
                 });
+
+                // Remote user avatar
+                UI.rfb.addEventListener('arduserinfo', ardHandleUserInfo);
 
                 // Update status bar when full encryption activates
                 UI.rfb.addEventListener('ardencryptionstate', () => {
@@ -218,6 +454,49 @@
         //  Wrap UI.connectFinished — reset reconnect counter + fix status
         // =============================================================
 
+        // =============================================================
+        //  Mac Key Labels — swap Alt→Opt, Windows→Cmd on ARD
+        // =============================================================
+
+        function ardApplyMacKeyLabels() {
+            const altBtn = document.getElementById('noVNC_toggle_alt_button');
+            altBtn.src = "ard/images/opt.svg";
+            altBtn.alt = "Opt";
+            altBtn.title = "Toggle Option";
+
+            const winBtn = document.getElementById('noVNC_toggle_windows_button');
+            winBtn.src = "ard/images/cmd.svg";
+            winBtn.alt = "Cmd";
+            winBtn.title = "Toggle Command";
+        }
+
+        // =============================================================
+        //  Control bar: stay open if cursor is hovering, auto-close on leave
+        // =============================================================
+
+        // If the 2s auto-close timer fires while the cursor is on the
+        // control bar, cancel the close and leave the bar pinned open
+        // (as if the user clicked the handle to open it).
+        let ardControlbarHovered = false;
+        const controlBar = document.getElementById('noVNC_control_bar');
+        controlBar.addEventListener('mouseenter', () => { ardControlbarHovered = true; });
+        controlBar.addEventListener('mouseleave', () => { ardControlbarHovered = false; });
+
+        const _origCloseControlbar = UI.closeControlbar;
+        UI.closeControlbar = function () {
+            if (ardControlbarHovered && UI.closeControlbarTimeout) {
+                clearTimeout(UI.closeControlbarTimeout);
+                UI.closeControlbarTimeout = null;
+                return;
+            }
+            // Close ARD info panel when control bar closes
+            if (ardInfoPanel) {
+                ardInfoPanel.classList.remove('noVNC_open');
+                ardInfoBtn.classList.remove('noVNC_selected');
+            }
+            _origCloseControlbar.call(UI);
+        };
+
         const _origConnectFinished = UI.connectFinished;
         UI.connectFinished = function (e) {
             ardReconnectAttempt = 0;
@@ -225,6 +504,11 @@
             _origConnectFinished.call(UI, e);
             // Override upstream's wrong "unencrypted" status with ARD-aware message
             UI.showStatus(ardConnectionStatusMessage());
+            if (UI.rfb && UI.rfb._rfbAppleARD) {
+                ardApplyMacKeyLabels();
+                ardUpdateClipboardButtons(true);
+                ardUpdateControlSettings();
+            }
         };
 
         // =============================================================
@@ -249,6 +533,11 @@
 
         const _origDisconnectFinished = UI.disconnectFinished;
         UI.disconnectFinished = function (e) {
+            ardHideAvatar();
+            ardUpdateClipboardButtons(false);
+            // Reset exclusive control UI
+            document.getElementById('noVNC_ard_exclusive_row').classList.add('noVNC_hidden');
+            document.getElementById('noVNC_setting_exclusive_control').checked = false;
             const wasConnected = UI.connected;
             const isARD = wasConnected && ardReconnectCredentials !== null;
 
@@ -335,6 +624,11 @@
 
             <hr>
 
+            <!-- Remote user avatar -->
+            <div id="noVNC_ard_user_avatar" class="noVNC_button noVNC_hidden" title="">
+                <img id="noVNC_ard_user_avatar_img" alt="">
+            </div>
+
             <!-- Drag/Pan the viewport -->
             <input type="image" alt="Drag" src="noVNC/app/images/drag.svg"
                 id="noVNC_view_drag_button" class="noVNC_button noVNC_hidden"
@@ -404,6 +698,26 @@
             </div>
             </div>
 
+            <!-- ARD clipboard buttons (replace legacy panel on ARD connections) -->
+            <button id="noVNC_clipboard_sync_button" class="noVNC_button noVNC_icon_btn noVNC_hidden"
+                    disabled title="Toggle clipboard auto-sync">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><g transform="translate(6.5,8.5) scale(0.458)" stroke-width="3.5"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></g>
+                </svg>
+            </button>
+            <button id="noVNC_clipboard_get_button" class="noVNC_button noVNC_icon_btn noVNC_hidden"
+                    disabled title="Get remote clipboard">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><path d="M16 4h2a2 2 0 0 1 2 2v4"/><path d="M21 14H11"/><path d="m15 10-4 4 4 4"/>
+                </svg>
+            </button>
+            <button id="noVNC_clipboard_send_button" class="noVNC_button noVNC_icon_btn noVNC_hidden"
+                    disabled title="Send local clipboard to remote">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 14h10"/><path d="M16 4h2a2 2 0 0 1 2 2v1.344"/><path d="m17 18 4-4-4-4"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 1.793-1.113"/><rect x="8" y="2" width="8" height="4" rx="1"/>
+                </svg>
+            </button>
+
             <!-- Toggle fullscreen -->
             <input type="image" alt="Full screen" src="noVNC/app/images/fullscreen.svg"
                 id="noVNC_fullscreen_button" class="noVNC_button noVNC_hidden"
@@ -431,6 +745,13 @@
                             <input id="noVNC_setting_view_only" type="checkbox"
                                    class="toggle">
                             View only
+                        </label>
+                    </li>
+                    <li id="noVNC_ard_exclusive_row" class="noVNC_hidden">
+                        <label>
+                            <input id="noVNC_setting_exclusive_control" type="checkbox"
+                                   class="toggle">
+                            Exclusive control
                         </label>
                     </li>
                     <li><hr></li>
