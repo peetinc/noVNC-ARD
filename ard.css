@@ -15,6 +15,7 @@
 }
 .noVNC_session_info {
     margin: 1em 0;
+    max-width: 290px;
 }
 #noVNC_ard_session_dlg .button_row {
     justify-content: flex-end;
