@@ -366,7 +366,7 @@ RFB.prototype._negotiateServerInit = function () {
     }
 
     // CRITICAL: Never send FBUpdateRequest with 0x0 dimensions —
-    // causes screensharingd to hang in zlib deflate infinite loop
+    // causes the macOS Screen Sharing server to hang in zlib deflate infinite loop
     if (width > 0 && height > 0) {
         this._ardRequestFullUpdate(width, height);
     } else {
