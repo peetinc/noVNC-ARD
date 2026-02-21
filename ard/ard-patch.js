@@ -679,8 +679,15 @@ RFB.prototype._ardHandleDisplayInfo2Msg = function () {
 
     if (this._sock.rQwait("DisplayInfo2Msg payload", 2 + payloadSize)) { return false; }
 
+    // Debug: dump payload for protocol analysis
+    const payload = this._sock.rQpeekBytes(2 + payloadSize);
+    const data = payload.subarray(2);
+    const hexHead = Array.from(data.subarray(0, Math.min(data.length, 76)))
+        .map(b => b.toString(16).padStart(2, '0')).join(' ');
+    Log.Info("ARD: DisplayInfo2 message — size=" + payloadSize +
+             ", payload: " + hexHead);
+
     this._sock.rQskipBytes(2 + payloadSize);
-    Log.Debug("ARD: DisplayInfo2 message — size=" + payloadSize);
     return true;
 };
 
@@ -972,8 +979,31 @@ RFB.prototype._ardHandleDisplayInfo2Rect = function () {
     const payloadSize = (hdr[0] << 8) | hdr[1];
     if (this._sock.rQwait("DisplayInfo2 rect payload", 2 + payloadSize)) { return false; }
 
+    // Parse payload for display dimensions
+    const payload = this._sock.rQpeekBytes(2 + payloadSize);
+    const data = payload.subarray(2); // skip size prefix
+
+    // Debug: dump payload for protocol analysis
+    const hexHead = Array.from(data.subarray(0, Math.min(data.length, 40)))
+        .map(b => b.toString(16).padStart(2, '0')).join(' ');
+    Log.Info("ARD: DisplayInfo2 rect — size=" + payloadSize +
+             ", FBU rect=" + this._FBU.x + "," + this._FBU.y +
+             " " + this._FBU.width + "x" + this._FBU.height +
+             ", payload: " + hexHead);
+
     this._sock.rQskipBytes(2 + payloadSize);
-    Log.Debug("ARD: DisplayInfo2 rect — size=" + payloadSize);
+
+    // Use FBU rect dimensions to resize if they indicate a new desktop size
+    const newW = this._FBU.width;
+    const newH = this._FBU.height;
+    if (newW > 0 && newH > 0 &&
+        (newW !== this._fbWidth || newH !== this._fbHeight)) {
+        Log.Info("ARD: DisplayInfo2 resize " +
+                 this._fbWidth + "x" + this._fbHeight +
+                 " → " + newW + "x" + newH);
+        this._resize(newW, newH);
+    }
+
     return true;
 };
 
