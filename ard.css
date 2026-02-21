@@ -142,28 +142,27 @@
 
 /* Connection Info Panel */
 #ard_info_panel {
-    min-width: 220px;
+    width: max-content;
+    max-width: 350px;
     padding: 10px;
 }
 
 .ard_info_table {
-    width: 100%;
     border-collapse: collapse;
     font-size: 13px;
+    table-layout: fixed;
+    width: 100%;
 }
 
 .ard_info_table td {
     padding: 3px 6px;
     vertical-align: top;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ard_info_table td:first-child {
     font-weight: bold;
-    white-space: nowrap;
     color: #888;
-    width: 90px;
-}
-
-.ard_info_table td:last-child {
-    word-break: break-all;
 }

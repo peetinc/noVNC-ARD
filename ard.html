@@ -67,11 +67,23 @@
             Log.Error("Couldn't fetch mandatory.json: " + err);
         }
 
+        // Default to local scaling
+        if (defaults.resize === undefined) defaults.resize = 'scale';
+
         // ── ARD sidebar feature toggles ──────────────────────
         // Set any to false to hide that control from the sidebar.
-        const showArdUserAvatar    = true;  // macOS user icon + login tooltip
-        const showArdClipboard     = true;  // clipboard buttons (if false, auto-sync stays on)
-        const showArdScreenLock    = true;  // curtain / screen lock button
+        // All overridable via URL params (e.g. ?showArdQuality=false)
+        const _ardUrlParams = new URLSearchParams(window.location.search);
+        function _ardToggle(name, dflt) {
+            const v = _ardUrlParams.get(name);
+            return v === 'false' ? false : v === 'true' ? true : dflt;
+        }
+        const showArdUserAvatar    = _ardToggle('showArdUserAvatar',    true);
+        const showArdClipboard     = _ardToggle('showArdClipboard',     true);
+        const showArdScreenLock    = _ardToggle('showArdScreenLock',    true);
+        const showArdQuality       = _ardToggle('showArdQuality',       true);
+        const showArdDisplaySelect = _ardToggle('showArdDisplaySelect', true);
+        const ardAutoSelectDisplay = _ardToggle('ardAutoSelectDisplay', true);
         // ────────────────────────────────────────────────────
 
         UI.start({ settings: { defaults: defaults,
@@ -577,6 +589,7 @@
                 UI.rfb._ardVirtualLogin = ardVirtualLogin;
                 UI.rfb._ardQualityPreset = ardInitialQuality;
                 UI.rfb._ardControlMode = ardInitialControlMode;
+                UI.rfb._ardAutoSelectDisplay = ardAutoSelectDisplay;
 
                 // Session select event listener
                 UI.rfb.addEventListener('ardsessionselect', (e) => {
@@ -687,7 +700,9 @@
                 ardApplyMacKeyLabels();
                 ardUpdateClipboardButtons(true);
                 ardUpdateControlSettings();
-                document.getElementById('noVNC_quality_button').classList.remove('noVNC_hidden');
+                if (showArdQuality) {
+                    document.getElementById('noVNC_quality_button').classList.remove('noVNC_hidden');
+                }
                 ardSyncQualityStops();
                 ardUpdateCurtainButton();
             }
@@ -994,7 +1009,7 @@
                         <label for="noVNC_setting_resize">Scaling mode:</label>
                         <select id="noVNC_setting_resize" name="vncResize">
                             <option value="off">None</option>
-                            <option value="scale">Local scaling</option>
+                            <option value="scale" selected>Local scaling</option>
                             <option value="remote">Remote resizing</option>
                         </select>
                     </li>
