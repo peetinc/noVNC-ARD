@@ -27,6 +27,7 @@
     height: 25px;
     border-radius: 50%;
     display: block;
+    margin: 0 auto;
 }
 
 /* ARD toolbar icon buttons (clipboard) */
@@ -53,6 +54,18 @@
 .noVNC_icon_btn:not(:disabled):hover {
     color: #fff;
     opacity: 1;
+}
+
+/* ARD curtain panel */
+.noVNC_heading_icon {
+    width: 1em;
+    height: 1em;
+    vertical-align: middle;
+    margin-right: 0.3em;
+}
+#noVNC_curtain_message {
+    width: 100%;
+    box-sizing: border-box;
 }
 
 /* Quality selector (ARD quality presets) */

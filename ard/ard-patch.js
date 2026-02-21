@@ -119,6 +119,7 @@ RFB.prototype._negotiateProtocolVersion = function () {
             this._ardCapabilityBitmap = null;
             this._ardSessionSelectNeeded = false;
             this._ardQualityPreset = 'thousands';
+            this._ardCurtainActive = false;
 
             // Register ARD pixel decoders
             this._decoders[encodingArdHalftone]  = new ArdHalftoneDecoder();
@@ -1236,6 +1237,51 @@ RFB.prototype.requestFullUpdate = function () {
                                      this._fbWidth, this._fbHeight);
     }
     this._sock.flush();
+};
+
+// ===== Curtain (screen lock) =====
+
+Object.defineProperty(RFB.prototype, 'ardCurtainActive', {
+    get() { return this._ardCurtainActive; }
+});
+
+RFB.prototype.ardCurtainLock = function (message) {
+    if (this._rfbConnectionState !== 'connected' || !this._rfbAppleARD) return;
+    const text = (message !== undefined) ? String(message) : '';
+    const payload = text ? ('Screen locked by administrator.\r\r' + text)
+                         : 'Screen locked by administrator.';
+    this._ardCurtainActive = true;
+    this._ardSendSessionVisibility(false, payload);
+    this._sock.flush();
+    Log.Info("ARD: curtain engaged" + (text ? ' ("' + text.substring(0, 40) + '")' : ''));
+    this.dispatchEvent(new CustomEvent('ardcurtainchange',
+        { detail: { active: true } }));
+};
+
+RFB.prototype.ardCurtainUnlock = function () {
+    if (this._rfbConnectionState !== 'connected' || !this._rfbAppleARD) return;
+    this._ardCurtainActive = false;
+    this._ardSendSessionVisibility(true, '');
+    this._sock.flush();
+    Log.Info("ARD: curtain disengaged");
+    this.dispatchEvent(new CustomEvent('ardcurtainchange',
+        { detail: { active: false } }));
+};
+
+// SessionVisibility (0x0c): [type][pad][u16be visible][u16be msgLen][msg...]
+RFB.prototype._ardSendSessionVisibility = function (visible, message) {
+    const enc = new TextEncoder();
+    const msgBytes = visible ? new Uint8Array(0) : enc.encode(message);
+    const msgLen = msgBytes.length;
+    this._sock.sQpush8(0x0c);
+    this._sock.sQpush8(0);
+    this._sock.sQpush16(visible ? 1 : 0);
+    this._sock.sQpush16(msgLen);
+    for (let i = 0; i < msgLen; i++) {
+        this._sock.sQpush8(msgBytes[i]);
+    }
+    Log.Info("ARD: SessionVisibility → " + (visible ? "show" : "curtain") +
+             " msgLen=" + msgLen);
 };
 
 // ===== (g) FBU pseudo-encoding dispatch =====
