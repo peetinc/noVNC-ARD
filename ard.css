@@ -1,1 +1,46 @@
 /* noVNC-ARD: Custom styles (Layer 2+) */
+
+/* Session Select Dialog — centered overlay, above transition screen (z-index 50) */
+#noVNC_ard_session_dlg {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 100;
+}
+#noVNC_ard_session_dlg.noVNC_open {
+    visibility: visible;
+    opacity: 1;
+    transform: translate(-50%, -50%);
+}
+.noVNC_session_info {
+    margin: 1em 0;
+}
+
+/* Connection Info Panel */
+#ard_info_panel {
+    min-width: 220px;
+    padding: 10px;
+}
+
+.ard_info_table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.ard_info_table td {
+    padding: 3px 6px;
+    vertical-align: top;
+}
+
+.ard_info_table td:first-child {
+    font-weight: bold;
+    white-space: nowrap;
+    color: #888;
+    width: 90px;
+}
+
+.ard_info_table td:last-child {
+    word-break: break-all;
+}

@@ -84,6 +84,22 @@ export const serverFlagMayControl      = 0x02;
 export const serverFlagSessionSelect   = 0x04;
 export const serverFlagNoVirtualDisplay = 0x08;
 
+// ===== Session Select =====
+
+export const sessionCmdRequestConsole       = 0;
+export const sessionCmdConnectToConsole     = 1;
+export const sessionCmdConnectToVirtualDisplay = 2;
+export const sessionCancelByte              = 0x64;
+
+export const sessionStatusGranted                = 0;
+export const sessionStatusPending                = 2;
+export const sessionStatusPendingAlt             = 3;
+export const sessionStatusGrantedAfterPending    = 4;
+
+// ===== Clipboard Format =====
+
+export const clipboardFormatUTF8 = 1;
+
 // ===== Security Types =====
 
 export const securityTypeARD          = 30;

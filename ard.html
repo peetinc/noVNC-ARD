@@ -68,6 +68,248 @@
 
         UI.start({ settings: { defaults: defaults,
                                mandatory: mandatory } });
+
+        // Pre-set ARD encryption dropdown from URL param (?ardEncryption=1|2)
+        const urlParams = new URLSearchParams(window.location.search);
+        const ardEncParam = urlParams.get('ardEncryption');
+        if (ardEncParam === '1' || ardEncParam === '2') {
+            document.getElementById('noVNC_setting_ardEncryption').value = ardEncParam;
+        }
+
+        // Case-insensitive URL param helper
+        function getParamCI(name) {
+            const lower = name.toLowerCase();
+            for (const [k, v] of urlParams) {
+                if (k.toLowerCase() === lower) return v;
+            }
+            return null;
+        }
+
+        // virtualLogin: 0=always share display, 1=show picker (default), 2=always virtual
+        const virtualLoginParam = parseInt(getParamCI('virtualLogin'), 10);
+        const ardVirtualLogin = (virtualLoginParam === 0 || virtualLoginParam === 2)
+            ? virtualLoginParam : 1;
+
+        // ARD info panel toggle — use noVNC's class-based panel system
+        const ardInfoBtn = document.getElementById('ard_info_button');
+        const ardInfoPanel = document.getElementById('ard_info_panel');
+        if (ardInfoBtn && ardInfoPanel) {
+            ardInfoBtn.addEventListener('click', () => {
+                if (ardInfoPanel.classList.contains('noVNC_open')) {
+                    ardInfoPanel.classList.remove('noVNC_open');
+                    ardInfoBtn.classList.remove('noVNC_selected');
+                } else {
+                    ardInfoPanel.classList.add('noVNC_open');
+                    ardInfoBtn.classList.add('noVNC_selected');
+                }
+            });
+        }
+
+        // =============================================================
+        //  ARD Session Select UI
+        // =============================================================
+
+        document.getElementById('noVNC_ard_session_share_button')
+            .addEventListener('click', (e) => {
+                e.preventDefault();
+                document.getElementById('noVNC_ard_session_dlg').classList.remove('noVNC_open');
+                UI.rfb.selectSessionType(1); // ConnectToConsole
+            });
+        document.getElementById('noVNC_ard_session_virtual_button')
+            .addEventListener('click', (e) => {
+                e.preventDefault();
+                document.getElementById('noVNC_ard_session_dlg').classList.remove('noVNC_open');
+                UI.rfb.selectSessionType(2); // ConnectToVirtualDisplay
+            });
+
+        // =============================================================
+        //  ARD Auto-Reconnect State
+        // =============================================================
+
+        let ardReconnectAttempt = 0;
+        const ardReconnectMaxAttempts = 10;
+        let ardReconnectCallback = null;
+        let ardReconnectCredentials = null; // { username, password }
+        let ardLastDisconnectTime = 0;
+        let ardInhibitReconnect = true;
+
+        // =============================================================
+        //  Wrap UI.setCredentials — capture username+password for reconnect
+        // =============================================================
+
+        const _origSetCredentials = UI.setCredentials;
+        UI.setCredentials = function (e) {
+            const username = document.getElementById('noVNC_username_input').value;
+            const password = document.getElementById('noVNC_password_input').value;
+            if (username || password) {
+                ardReconnectCredentials = { username, password };
+            }
+            _origSetCredentials.call(UI, e);
+        };
+
+        // =============================================================
+        //  Wrap UI.credentials — auto-submit cached credentials on reconnect
+        // =============================================================
+
+        const _origCredentials = UI.credentials;
+        UI.credentials = function (e) {
+            if (ardReconnectAttempt > 0 && ardReconnectCredentials) {
+                UI.rfb.sendCredentials(ardReconnectCredentials);
+                return;
+            }
+            _origCredentials.call(UI, e);
+        };
+
+        // =============================================================
+        //  Wrap UI.connect — add ARD event listeners
+        // =============================================================
+
+        const _origUIConnect = UI.connect;
+        UI.connect = function (evt, password) {
+            _origUIConnect.call(UI, evt, password);
+            ardInhibitReconnect = false;
+            if (UI.rfb) {
+                // Apply virtualLogin setting
+                UI.rfb._ardVirtualLogin = ardVirtualLogin;
+
+                // Session select event listener
+                UI.rfb.addEventListener('ardsessionselect', (e) => {
+                    const infoEl = document.querySelector('.noVNC_session_info');
+                    if (e.detail.hasConsoleUser) {
+                        document.getElementById('noVNC_ard_session_username').textContent =
+                            e.detail.username;
+                        infoEl.style.display = '';
+                    } else {
+                        infoEl.style.display = 'none';
+                    }
+                    document.getElementById('noVNC_ard_session_dlg').classList.add('noVNC_open');
+                });
+
+                // Update status bar when full encryption activates
+                UI.rfb.addEventListener('ardencryptionstate', () => {
+                    if (UI.connected) {
+                        UI.showStatus(ardConnectionStatusMessage());
+                    }
+                });
+            }
+        };
+
+        // =============================================================
+        //  ARD encryption-aware status message
+        // =============================================================
+
+        function ardConnectionStatusMessage() {
+            if (UI.rfb && UI.rfb._rfbAppleARD) {
+                if (UI.rfb._ardEncryptionEnabled) {
+                    return "Connected (encrypted) to " + UI.desktopName;
+                }
+                if (UI.rfb._ardAuthKey) {
+                    return "Connected (keystroke encryption) to " + UI.desktopName;
+                }
+                return "Connected (unencrypted) to " + UI.desktopName;
+            }
+            if (UI.getSetting('encrypt')) {
+                return "Connected (encrypted) to " + UI.desktopName;
+            }
+            return "Connected (unencrypted) to " + UI.desktopName;
+        }
+
+        // =============================================================
+        //  Wrap UI.connectFinished — reset reconnect counter + fix status
+        // =============================================================
+
+        const _origConnectFinished = UI.connectFinished;
+        UI.connectFinished = function (e) {
+            ardReconnectAttempt = 0;
+            ardInhibitReconnect = false;
+            _origConnectFinished.call(UI, e);
+            // Override upstream's wrong "unencrypted" status with ARD-aware message
+            UI.showStatus(ardConnectionStatusMessage());
+        };
+
+        // =============================================================
+        //  Wrap UI.disconnect — inhibit on manual disconnect
+        // =============================================================
+
+        const _origDisconnect = UI.disconnect;
+        UI.disconnect = function () {
+            ardInhibitReconnect = true;
+            ardReconnectCredentials = null;
+            ardReconnectAttempt = 0;
+            if (ardReconnectCallback) {
+                clearTimeout(ardReconnectCallback);
+                ardReconnectCallback = null;
+            }
+            _origDisconnect.call(UI);
+        };
+
+        // =============================================================
+        //  Wrap UI.disconnectFinished — ARD auto-reconnect with backoff
+        // =============================================================
+
+        const _origDisconnectFinished = UI.disconnectFinished;
+        UI.disconnectFinished = function (e) {
+            const wasConnected = UI.connected;
+            const isARD = wasConnected && ardReconnectCredentials !== null;
+
+            if (isARD && !ardInhibitReconnect) {
+                // Circuit breaker: rapid disconnect loop detection
+                const now = Date.now();
+                if ((now - ardLastDisconnectTime) < 2000 && ardReconnectAttempt > 0) {
+                    ardReconnectAttempt = 0;
+                    ardReconnectCredentials = null;
+                    _origDisconnectFinished.call(UI, e);
+                    return;
+                }
+                ardLastDisconnectTime = now;
+                ardReconnectAttempt++;
+
+                if (ardReconnectAttempt > ardReconnectMaxAttempts) {
+                    ardReconnectAttempt = 0;
+                    ardReconnectCredentials = null;
+                    _origDisconnectFinished.call(UI, e);
+                    return;
+                }
+
+                // Exponential backoff: 500ms, 1s, 2s, 5s, 10s cap
+                const delays = [500, 1000, 2000, 5000, 10000];
+                const delay = delays[Math.min(ardReconnectAttempt - 1, delays.length - 1)];
+
+                // Show reconnecting UI
+                UI.connected = false;
+                UI.rfb = undefined;
+                document.getElementById('noVNC_transition_text').textContent =
+                    'Reconnecting...';
+                UI.updateVisualState('reconnecting');
+
+                ardReconnectCallback = setTimeout(() => {
+                    ardReconnectCallback = null;
+                    if (ardInhibitReconnect) return;
+                    UI.connect(null, ardReconnectCredentials && ardReconnectCredentials.password);
+                }, delay);
+                return;
+            }
+
+            _origDisconnectFinished.call(UI, e);
+        };
+
+        // =============================================================
+        //  Cancel reconnect button
+        // =============================================================
+
+        document.getElementById('noVNC_cancel_reconnect_button')
+            .addEventListener('click', () => {
+                ardInhibitReconnect = true;
+                if (ardReconnectCallback) {
+                    clearTimeout(ardReconnectCallback);
+                    ardReconnectCallback = null;
+                }
+                ardReconnectAttempt = 0;
+                ardReconnectCredentials = null;
+                UI.updateVisualState('disconnected');
+                UI.openControlbar();
+                UI.openConnectPanel();
+            });
     </script>
 </head>
 
@@ -219,6 +461,13 @@
                                 <label for="noVNC_setting_compression">Compression level:</label>
                                 <input id="noVNC_setting_compression" type="range" min="0" max="9" value="2">
                             </li>
+                            <li>
+                                <label for="noVNC_setting_ardEncryption">ARD encryption:</label>
+                                <select id="noVNC_setting_ardEncryption" name="ardEncryption">
+                                    <option value="2">Full tunnel (default)</option>
+                                    <option value="1">Keystroke only</option>
+                                </select>
+                            </li>
                             <li><hr></li>
                             <li>
                                 <label for="noVNC_setting_repeaterID">Repeater ID:</label>
@@ -294,6 +543,29 @@
             </div>
             </div>
 
+            <!-- ARD Connection Info -->
+            <input type="image" alt="Info" src="noVNC/app/images/info.svg"
+                id="ard_info_button" class="noVNC_button"
+                title="Connection info">
+            <div class="noVNC_vcenter">
+            <div id="ard_info_panel" class="noVNC_panel">
+                <div class="noVNC_heading">
+                    <img alt="" src="noVNC/app/images/info.svg"> Connection Info
+                </div>
+                <table class="ard_info_table">
+                    <tr><td>Server</td><td id="ard_info_server">—</td></tr>
+                    <tr><td>Resolution</td><td id="ard_info_resolution">—</td></tr>
+                    <tr><td>Displays</td><td id="ard_info_displays">—</td></tr>
+                    <tr><td>Encryption</td><td id="ard_info_encryption">—</td></tr>
+                    <tr><td>Mode</td><td id="ard_info_mode">—</td></tr>
+                    <tr><td>Session</td><td id="ard_info_session">—</td></tr>
+                    <tr><td>Remote User</td><td id="ard_info_user">—</td></tr>
+                    <tr><td>Keyboard</td><td id="ard_info_keyboard">—</td></tr>
+                    <tr><td>Protocol</td><td id="ard_info_protocol">—</td></tr>
+                </table>
+            </div>
+            </div>
+
             <!-- Connection controls -->
             <input type="image" alt="Disconnect" src="noVNC/app/images/disconnect.svg"
                 id="noVNC_disconnect_button" class="noVNC_button"
@@ -366,6 +638,18 @@
             <input id="noVNC_credentials_button" type="submit" value="Send credentials">
         </div>
     </form></div>
+    </div>
+
+    <!-- ARD Session Select Dialog -->
+    <div id="noVNC_ard_session_dlg" class="noVNC_panel">
+        <div class="noVNC_heading">Choose Session Type</div>
+        <p class="noVNC_session_info">User <strong><span id="noVNC_ard_session_username"></span></strong> is logged in at the console.</p>
+        <div class="button_row">
+            <button id="noVNC_ard_session_share_button" class="noVNC_submit">
+                Share Display</button>
+            <button id="noVNC_ard_session_virtual_button">
+                Virtual Display</button>
+        </div>
     </div>
 
     <!-- Transition screens -->
