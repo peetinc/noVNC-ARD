@@ -1,11 +1,40 @@
 /* noVNC-ARD: Custom styles (Layer 2+) */
 
-/* Monochrome logo */
-.noVNC_logo {
+/* Hide exclusive control row when not connected */
+#noVNC_ard_exclusive_row.noVNC_hidden {
+    display: none !important;
+}
+
+/* ── ARD theme: monochrome branding ─────────────── */
+.noVNC_theme_ard {
+    --novnc-blue: rgb(130, 130, 130);
+    --novnc-darkblue: rgb(100, 100, 100);
+}
+.noVNC_theme_ard .noVNC_logo {
     color: rgba(255, 255, 255, 0.8);
 }
-.noVNC_logo span {
+.noVNC_theme_ard .noVNC_logo span {
     color: rgb(145, 145, 145);
+}
+/* Solid "o" replacing Orbitron's cut glyph */
+.noVNC_logo_o {
+    display: inline-block;
+    position: relative;
+    width: 0.58em;
+    height: 0.62em;
+    background: rgb(145, 145, 145);
+    border-radius: 0.12em;
+    vertical-align: baseline;
+    margin-left: 0.05em;
+    box-shadow: 0.1em 0.1em 0 black;
+}
+.noVNC_logo_o img {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 69%;
+    height: 69%;
 }
 
 /* Session Select Dialog — centered overlay, above transition screen (z-index 50) */

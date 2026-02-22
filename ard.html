@@ -7,6 +7,7 @@
     Uses upstream noVNC as an untouched submodule; ARD extensions
     are applied via monkey-patching in ard/ard-patch.js.
     -->
+    <meta charset="utf-8">
     <title>noVNC-ARD</title>
 
     <link rel="icon" type="image/x-icon" href="ard/images/noARD.ico">
@@ -84,6 +85,67 @@
         const showArdQuality       = _ardToggle('showArdQuality',       true);
         const showArdDisplaySelect = _ardToggle('showArdDisplaySelect', true);
         const ardAutoSelectDisplay = _ardToggle('ardAutoSelectDisplay', true);
+        // ── Theme system ──────────────────────────────────
+        // ?theme=novnc (default), ?theme=novnc-ard, ?theme=noard (case-insensitive)
+        const _ardThemes = {
+            'novnc-ard': {
+                title: 'noVNC-ARD',
+                favicon: 'ard/images/noARD.ico',
+                cssVars: {
+                    '--novnc-blue': 'rgb(130, 130, 130)',
+                    '--novnc-darkblue': 'rgb(100, 100, 100)',
+                },
+                cssClass: 'noVNC_theme_ard',
+                toolbarLogo: '<input type="image" alt="noVNC-ARD" src="ard/images/binoculars.svg"'
+                    + ' class="noVNC_button" id="noVNC_ard_logo"'
+                    + ' style="pointer-events:none; opacity:0.8; padding:4px;'
+                    + ' background-color:rgb(145,145,145); border-radius:6px">',
+                connectLogo: '<span>n<i class="noVNC_logo_o">'
+                    + '<img alt="" src="ard/images/binoculars.svg"></i></span>VNC',
+                connectButtonHTML: 'Connect',
+            },
+            'noard': {
+                title: 'noARD',
+                favicon: 'ard/images/noARD.ico',
+                cssVars: {
+                    '--novnc-blue': 'rgb(130, 130, 130)',
+                    '--novnc-darkblue': 'rgb(100, 100, 100)',
+                },
+                cssClass: 'noVNC_theme_ard',
+                toolbarLogo: '<input type="image" alt="noARD" src="ard/images/binoculars.svg"'
+                    + ' class="noVNC_button" id="noVNC_ard_logo"'
+                    + ' style="pointer-events:none; padding:4px;'
+                    + ' background-color:rgb(145,145,145); border-radius:6px">',
+                connectLogo: '<span style="margin-right:5px">n<i class="noVNC_logo_o">'
+                    + '<img alt="" src="ard/images/binoculars.svg"></i></span>'
+                    + '<span style="color:rgb(227,227,227)">ARD</span>',
+                connectButtonHTML: 'Connect',
+            },
+            'novnc': {
+                title: 'noVNC',
+                favicon: 'noVNC/app/images/icons/novnc.ico',
+                cssVars: {},
+                cssClass: 'noVNC_theme_classic',
+                toolbarLogo: '<h1 class="noVNC_logo" translate="no">'
+                    + '<span>no</span><br>VNC</h1>',
+                connectLogo: '<span>no</span>VNC',
+                connectButtonHTML: '<img alt="" src="noVNC/app/images/connect.svg"> Connect',
+            },
+        };
+        const _ardThemeName = (_ardUrlParams.get('theme') || 'novnc').toLowerCase();
+
+        function _ardApplyTheme(theme) {
+            document.documentElement.classList.add(theme.cssClass);
+            for (const [prop, val] of Object.entries(theme.cssVars))
+                document.documentElement.style.setProperty(prop, val);
+            document.title = theme.title;
+            document.querySelector('link[rel="icon"]').href = theme.favicon;
+            document.getElementById('noVNC_toolbar_logo_slot').innerHTML = theme.toolbarLogo;
+            document.getElementById('noVNC_connect_logo').innerHTML = theme.connectLogo;
+            document.getElementById('noVNC_connect_button').innerHTML = theme.connectButtonHTML;
+        }
+
+        _ardApplyTheme(_ardThemes[_ardThemeName] || _ardThemes['novnc']);
         // ────────────────────────────────────────────────────
 
         UI.start({ settings: { defaults: defaults,
@@ -839,7 +901,7 @@
 
             <div class="noVNC_scroll">
 
-            <h1 class="noVNC_logo" translate="no"><span>no</span><br>VNC</h1>
+            <div id="noVNC_toolbar_logo_slot"></div>
 
             <hr>
 
@@ -1168,11 +1230,9 @@
     <!-- Connect button -->
     <div class="noVNC_center">
         <div id="noVNC_connect_dlg">
-            <p class="noVNC_logo" translate="no"><span>no</span>VNC</p>
+            <p id="noVNC_connect_logo" class="noVNC_logo" translate="no"></p>
             <div>
-                <button id="noVNC_connect_button">
-                    Connect
-                </button>
+                <button id="noVNC_connect_button"></button>
             </div>
         </div>
     </div>
