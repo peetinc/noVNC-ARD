@@ -1,5 +1,13 @@
 /* noVNC-ARD: Custom styles (Layer 2+) */
 
+/* Monochrome logo */
+.noVNC_logo {
+    color: rgba(255, 255, 255, 0.8);
+}
+.noVNC_logo span {
+    color: rgb(145, 145, 145);
+}
+
 /* Session Select Dialog — centered overlay, above transition screen (z-index 50) */
 #noVNC_ard_session_dlg {
     position: fixed;
