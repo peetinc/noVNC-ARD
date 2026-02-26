@@ -1,4 +1,4 @@
-# noVNC-ARD
+<p><img src="ard/images/noVNC-ARD-logo.png" alt="noVNC-ARD" width="490"></p>
 
 ARD protocol extensions for [noVNC](https://github.com/novnc/noVNC).
 

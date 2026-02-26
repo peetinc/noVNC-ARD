@@ -11,7 +11,8 @@
     --novnc-darkblue: rgb(100, 100, 100);
 }
 .noVNC_theme_ard .noVNC_logo {
-    color: rgba(255, 255, 255, 0.8);
+    color: rgb(214, 214, 214);
+    text-shadow: 0.04em 0.04em 0 black;
 }
 .noVNC_theme_ard .noVNC_logo span {
     color: rgb(145, 145, 145);
@@ -26,7 +27,7 @@
     border-radius: 0.12em;
     vertical-align: baseline;
     margin-left: 0.05em;
-    box-shadow: 0.1em 0.1em 0 black;
+    box-shadow: 0.04em 0.04em 0 black;
 }
 .noVNC_logo_o img {
     position: absolute;
