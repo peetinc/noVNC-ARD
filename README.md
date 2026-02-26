@@ -49,6 +49,7 @@ open http://localhost:6088/ard.html
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `theme` | string | `novnc` | UI theme: `novnc`, `novnc-ard`, `noard` |
 | `ardQuality` | string | `thousands` | Initial quality preset: `halftone`, `gray`, `thousands`, `millions` |
 | `ardEncryption` | integer | `2` | Encryption mode: `1` = keystroke-only, `2` = full tunnel |
 | `ardControlMode` | integer | `1` | Control mode: `0` = observe, `1` = shared, `2` = exclusive |
@@ -119,13 +120,14 @@ noVNC-ARD/
       zlib-16gray.js            4-bit gray decoder (encoding 1001)
       zlib-thousands.js         16-bit RGB555 decoder (encoding 1002)
     images/
-      cmd.svg                   Mac Command key icon
-      opt.svg                   Mac Option key icon
-      user.svg                  Default user avatar
-      disconnect.svg            Disconnect icon (Lucide, ISC license)
-      quality.svg               Quality selector icon
-      quality-high.svg          High quality indicator
+      binoculars.svg            Observe mode icon (Lucide, ISC)
+      cmd.svg                   Mac Command key icon (Lucide, ISC)
+      disconnect.svg            Disconnect icon (Lucide, ISC)
+      opt.svg                   Mac Option key icon (Lucide, ISC)
+      quality.svg               Quality selector icon (Lucide, ISC)
+      quality-high.svg          High quality indicator (Lucide, ISC)
       quality-low.svg           Low quality indicator
+      user.svg                  Default user avatar (Lucide, ISC)
     tests/
       test.crypto.js            AES, SHA-1, PKCS#1 tests (FIPS/NIST vectors)
       test.wire.js              ARD wire format and message builder tests
@@ -169,6 +171,6 @@ This project is licensed under the [Mozilla Public License 2.0](LICENSE).
 
 **Upstream noVNC** is licensed under [MPL 2.0](https://github.com/novnc/noVNC/blob/master/LICENSE.txt) and lives in the `noVNC/` submodule with its own license file.
 
-**Lucide icons** (`ard/images/disconnect.svg`) are licensed under the [ISC License](https://github.com/lucide-icons/lucide/blob/main/LICENSE) (Copyright Lucide Contributors).
+**Lucide icons** are licensed under the [ISC License](https://github.com/lucide-icons/lucide/blob/main/LICENSE) (Copyright Lucide Contributors): `binoculars.svg`, `cmd.svg`, `disconnect.svg`, `opt.svg`, `quality.svg`, `quality-high.svg`, `user.svg`.
 
-All other SVG icons in `ard/images/` are original work covered by this project's MPL 2.0 license.
+Remaining SVG icons in `ard/images/` (`quality-low.svg`) are original work covered by this project's MPL 2.0 license.

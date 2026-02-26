@@ -13,6 +13,12 @@ Thumbs.db
 .idea/
 *.sublime-*
 
+# Claude Code
+.claude/
+
+# Private workspace
+private/
+
 # Logs
 *.log
 
