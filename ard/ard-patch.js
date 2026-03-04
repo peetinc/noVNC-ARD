@@ -93,6 +93,7 @@ const _origSendKey = RFB.prototype.sendKey;
 const _origIsSupportedSecurityType = RFB.prototype._isSupportedSecurityType;
 const _origNegotiateAuthentication = RFB.prototype._negotiateAuthentication;
 
+const _origSendMouse = RFB.prototype._sendMouse;
 const _origClipboardPasteFrom = RFB.prototype.clipboardPasteFrom;
 
 const _origWsFlush = Websock.prototype.flush;
@@ -1453,6 +1454,20 @@ RFB.prototype.sendKey = function (keysym, code, down) {
         return;
     }
     return _origSendKey.call(this, keysym, code, down);
+};
+
+// Patch _sendMouse — remap button mask for ARD (macOS button ordering)
+// VNC: bit0=left, bit1=middle, bit2=right
+// macOS/ARD: bit0=left, bit1=right, bit2=middle
+RFB.prototype._sendMouse = function (x, y, mask) {
+    if (this._rfbAppleARD) {
+        // Swap middle (VNC bit1) and right (VNC bit2) to macOS ordering
+        const ardMask = (mask & ~0x06)
+                      | (((mask >> 2) & 1) << 1)   // VNC right  → macOS bit 1
+                      | (((mask >> 1) & 1) << 2);   // VNC middle → macOS bit 2
+        return _origSendMouse.call(this, x, y, ardMask);
+    }
+    return _origSendMouse.call(this, x, y, mask);
 };
 
 // ===================================================================
