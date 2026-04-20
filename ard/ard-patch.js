@@ -1511,17 +1511,17 @@ RFB.prototype._handleWheel = function (ev) {
     // Tier 1: integer line steps (at least ±1 when non-zero)
     let lineX = 0, lineY = 0;
     if (dX !== 0) {
-        lineX = dX > 0 ? Math.max(1, Math.round(dX / 10))
-                       : Math.min(-1, Math.round(dX / 10));
+        lineX = dX > 0 ? Math.max(1, Math.round(dX / 20))
+                       : Math.min(-1, Math.round(dX / 20));
     }
     if (dY !== 0) {
-        lineY = dY > 0 ? Math.max(1, Math.round(dY / 10))
-                       : Math.min(-1, Math.round(dY / 10));
+        lineY = dY > 0 ? Math.max(1, Math.round(dY / 20))
+                       : Math.min(-1, Math.round(dY / 20));
     }
 
     // Float line deltas for compact scroll (sub-type 8)
-    const scrollX = dX / 10;
-    const scrollY = dY / 10;
+    const scrollX = dX / 20;
+    const scrollY = dY / 20;
 
     // Tier 2: 16.16 fixed-point line deltas
     const fixedX = Math.round(scrollX * 65536) | 0;
