@@ -432,6 +432,7 @@
             document.getElementById('noVNC_setting_exclusive_control').checked = (mode === 2);
             if (UI.rfb && UI.rfb._rfbAppleARD) {
                 UI.rfb.ardControlMode = mode;
+                UI.rfb.viewOnly = (mode === 0);
             }
             // Hide keyboard + extra keys buttons in Observe mode
             document.getElementById('noVNC_keyboard_button')
