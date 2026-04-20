@@ -1527,7 +1527,8 @@ RFB.prototype._handleWheel = function (ev) {
     // Discrete mouse wheel: no phase tracking
     const scrollPhase = 0;
     const momentumPhase = 0;
-    const flags = 0x0000;
+    const el = document.getElementById('noVNC_setting_natural_scrolling');
+    const flags = (el && el.checked) ? 0x0002 : 0x0000;
 
     // Send pair: sub-type 8 (compact) then sub-type 11 (detailed)
     RFB.messages.ardGestureCompactScroll(
