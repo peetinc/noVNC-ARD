@@ -796,3 +796,221 @@ describe('Session Select — waitingForUI stage', () => {
         strictEqual(result, false, 'waitingForUI should return false');
     });
 });
+
+// ===================================================================
+//  GestureEvent (0x17) — CompactScroll + ScrollWheel
+// ===================================================================
+
+const MSG_GESTURE_EVENT = 0x17;
+
+// Replicated message builders for sub-type 8 and sub-type 11
+
+function sendGestureCompactScroll(sock, scrollX, scrollY,
+                                  scrollPhase, momentumPhase, x, y) {
+    sock.sQpush8(MSG_GESTURE_EVENT);
+    sock.sQpush8(0);
+    sock.sQpush16(32);
+    sock.sQpush16(2);    // version
+    sock.sQpush16(8);    // sub-type
+
+    const buf = new Uint8Array(28);
+    const dv = new DataView(buf.buffer);
+    dv.setFloat32(0, scrollX, false);
+    dv.setFloat32(4, scrollY, false);
+    dv.setFloat32(8, 0, false);
+    dv.setUint32(12, 1, false);
+    dv.setUint32(16, scrollPhase, false);
+    dv.setUint32(20, momentumPhase, false);
+    dv.setUint16(24, x, false);
+    dv.setUint16(26, y, false);
+    sock.sQpushBytes(buf);
+}
+
+function sendGestureScrollWheel(sock, deltaX, deltaY,
+                                 fixedPtDeltaX, fixedPtDeltaY,
+                                 pointDeltaX, pointDeltaY,
+                                 scrollPhase, momentumPhase,
+                                 flags, x, y) {
+    sock.sQpush8(MSG_GESTURE_EVENT);
+    sock.sQpush8(0);
+    sock.sQpush16(54);
+    sock.sQpush16(1);    // version
+    sock.sQpush16(11);   // sub-type
+
+    const buf = new Uint8Array(50);
+    const dv = new DataView(buf.buffer);
+    dv.setInt16(0, deltaX, false);
+    dv.setInt16(2, deltaY, false);
+    dv.setInt16(4, 0, false);
+    dv.setInt32(6, fixedPtDeltaX, false);
+    dv.setInt32(10, fixedPtDeltaY, false);
+    dv.setInt32(14, 0, false);
+    dv.setInt32(18, pointDeltaX, false);
+    dv.setInt32(22, pointDeltaY, false);
+    dv.setInt32(26, 0, false);
+    dv.setUint32(30, scrollPhase, false);
+    dv.setUint32(34, momentumPhase, false);
+    dv.setUint32(38, 0, false);
+    dv.setUint16(42, 0, false);
+    dv.setUint16(44, flags, false);
+    dv.setUint16(46, x, false);
+    dv.setUint16(48, y, false);
+    sock.sQpushBytes(buf);
+}
+
+describe('GestureEvent CompactScroll sub-type 8 (0x17)', () => {
+    it('has correct total length of 36 bytes', () => {
+        const sock = new MockSock();
+        sendGestureCompactScroll(sock, 0, 0, 0, 0, 100, 200);
+        strictEqual(sock.data.length, 36);
+    });
+
+    it('has correct header bytes', () => {
+        const sock = new MockSock();
+        sendGestureCompactScroll(sock, 0, 0, 0, 0, 0, 0);
+        deepStrictEqual(
+            Array.from(sock.toBytes().slice(0, 8)),
+            [0x17, 0x00, 0x00, 0x20, 0x00, 0x02, 0x00, 0x08]
+        );
+    });
+
+    it('encodes negative float correctly (scrollY = -1.0)', () => {
+        const sock = new MockSock();
+        sendGestureCompactScroll(sock, 0, -1.0, 0, 0, 0, 0);
+        const bytes = sock.toBytes();
+        // f32be -1.0 = 0xBF800000 at offset 12 (scrollY)
+        deepStrictEqual(
+            Array.from(bytes.slice(12, 16)),
+            [0xBF, 0x80, 0x00, 0x00]
+        );
+    });
+
+    it('encodes positive float correctly (scrollX = 2.5)', () => {
+        const sock = new MockSock();
+        sendGestureCompactScroll(sock, 2.5, 0, 0, 0, 0, 0);
+        const bytes = sock.toBytes();
+        // f32be 2.5 = 0x40200000 at offset 8 (scrollX)
+        deepStrictEqual(
+            Array.from(bytes.slice(8, 12)),
+            [0x40, 0x20, 0x00, 0x00]
+        );
+    });
+
+    it('has scrollCount = 1', () => {
+        const sock = new MockSock();
+        sendGestureCompactScroll(sock, 0, 0, 0, 0, 0, 0);
+        const bytes = sock.toBytes();
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        strictEqual(dv.getUint32(20), 1, 'scrollCount');
+    });
+
+    it('encodes cursor position correctly', () => {
+        const sock = new MockSock();
+        sendGestureCompactScroll(sock, 0, 0, 0, 0, 512, 384);
+        const bytes = sock.toBytes();
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        strictEqual(dv.getUint16(32), 512, 'x');
+        strictEqual(dv.getUint16(34), 384, 'y');
+    });
+
+    it('zero scroll produces zero float bytes', () => {
+        const sock = new MockSock();
+        sendGestureCompactScroll(sock, 0, 0, 0, 0, 0, 0);
+        const bytes = sock.toBytes();
+        // scrollX (offset 8-11) and scrollY (offset 12-15) should be all zeros
+        for (let i = 8; i < 16; i++) {
+            strictEqual(bytes[i], 0, 'zero float byte at offset ' + i);
+        }
+    });
+});
+
+describe('GestureEvent ScrollWheel sub-type 11 (0x17)', () => {
+    it('has correct total length of 58 bytes', () => {
+        const sock = new MockSock();
+        sendGestureScrollWheel(sock, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200);
+        strictEqual(sock.data.length, 58);
+    });
+
+    it('has correct header bytes', () => {
+        const sock = new MockSock();
+        sendGestureScrollWheel(sock, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        deepStrictEqual(
+            Array.from(sock.toBytes().slice(0, 8)),
+            [0x17, 0x00, 0x00, 0x36, 0x00, 0x01, 0x00, 0x0B]
+        );
+    });
+
+    it('encodes signed deltaY = -3 correctly', () => {
+        const sock = new MockSock();
+        sendGestureScrollWheel(sock, 0, -3, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        const bytes = sock.toBytes();
+        // i16be -3 at offset 10 = [0xFF, 0xFD]
+        deepStrictEqual(
+            Array.from(bytes.slice(10, 12)),
+            [0xFF, 0xFD]
+        );
+    });
+
+    it('encodes signed deltaX = 5 correctly', () => {
+        const sock = new MockSock();
+        sendGestureScrollWheel(sock, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        const bytes = sock.toBytes();
+        // i16be 5 at offset 8 = [0x00, 0x05]
+        deepStrictEqual(
+            Array.from(bytes.slice(8, 10)),
+            [0x00, 0x05]
+        );
+    });
+
+    it('encodes 16.16 fixed-point correctly', () => {
+        const sock = new MockSock();
+        // fixedPtDeltaY = 3 * 65536 = 196608 = 0x00030000
+        sendGestureScrollWheel(sock, 0, 0, 0, 196608, 0, 0, 0, 0, 0, 0, 0);
+        const bytes = sock.toBytes();
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        strictEqual(dv.getInt32(18), 196608, 'fixedPtDeltaY');
+    });
+
+    it('encodes negative fixed-point correctly', () => {
+        const sock = new MockSock();
+        // fixedPtDeltaX = -1 * 65536 = -65536
+        sendGestureScrollWheel(sock, 0, 0, -65536, 0, 0, 0, 0, 0, 0, 0, 0);
+        const bytes = sock.toBytes();
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        strictEqual(dv.getInt32(14), -65536, 'fixedPtDeltaX');
+    });
+
+    it('has reserved fields as zero', () => {
+        const sock = new MockSock();
+        sendGestureScrollWheel(sock, 1, -1, 100, -100, 50, -50, 0, 0, 0, 0, 0);
+        const bytes = sock.toBytes();
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        // deltaZ at offset 12
+        strictEqual(dv.getInt16(12), 0, 'deltaZ');
+        // fixedPtDeltaZ at offset 22
+        strictEqual(dv.getInt32(22), 0, 'fixedPtDeltaZ');
+        // pointDeltaZ at offset 34
+        strictEqual(dv.getInt32(34), 0, 'pointDeltaZ');
+        // reserved u32 at offset 46
+        strictEqual(dv.getUint32(46), 0, 'reserved u32');
+        // reserved u16 at offset 50
+        strictEqual(dv.getUint16(50), 0, 'reserved u16');
+    });
+
+    it('encodes flags at correct offset', () => {
+        const sock = new MockSock();
+        sendGestureScrollWheel(sock, 0, 0, 0, 0, 0, 0, 0, 0, 0x0006, 0, 0);
+        const bytes = sock.toBytes();
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        strictEqual(dv.getUint16(52), 0x0006, 'flags');
+    });
+
+    it('encodes cursor position correctly', () => {
+        const sock = new MockSock();
+        sendGestureScrollWheel(sock, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1920, 1080);
+        const bytes = sock.toBytes();
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        strictEqual(dv.getUint16(54), 1920, 'x');
+        strictEqual(dv.getUint16(56), 1080, 'y');
+    });
+});

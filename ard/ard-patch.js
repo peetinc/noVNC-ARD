@@ -16,6 +16,7 @@
 import RFB from '../noVNC/core/rfb.js';
 import Websock from '../noVNC/core/websock.js';
 import * as Log from '../noVNC/core/util/logging.js';
+import { clientToElement } from '../noVNC/core/util/element.js';
 import { encodeUTF8, decodeUTF8 } from '../noVNC/core/util/strings.js';
 import { encodings } from '../noVNC/core/encodings.js';
 import legacyCrypto from '../noVNC/core/crypto/crypto.js';
@@ -61,6 +62,7 @@ import {
     msgTypeAutoPasteboard,
     msgTypeClipboardReq,
     msgTypeClipboardSend,
+    msgTypeGestureEvent,
     stateLocalUserClosed,
     statePasteboardChanged,
     statePasteboardDataNeeded,
@@ -94,6 +96,7 @@ const _origIsSupportedSecurityType = RFB.prototype._isSupportedSecurityType;
 const _origNegotiateAuthentication = RFB.prototype._negotiateAuthentication;
 
 const _origSendMouse = RFB.prototype._sendMouse;
+const _origHandleWheel = RFB.prototype._handleWheel;
 const _origClipboardPasteFrom = RFB.prototype.clipboardPasteFrom;
 
 const _origWsFlush = Websock.prototype.flush;
@@ -1470,6 +1473,72 @@ RFB.prototype._sendMouse = function (x, y, mask) {
     return _origSendMouse.call(this, x, y, mask);
 };
 
+// Patch _handleWheel — send ARD GestureEvent (0x17) instead of VNC button masks
+RFB.prototype._handleWheel = function (ev) {
+    if (!this._rfbAppleARD) {
+        return _origHandleWheel.call(this, ev);
+    }
+
+    if (this._rfbConnectionState !== 'connected') { return; }
+    if (this._viewOnly) { return; }
+
+    ev.stopPropagation();
+    ev.preventDefault();
+
+    // Convert DOM coordinates → element-relative → server framebuffer
+    const pos = clientToElement(ev.clientX, ev.clientY, this._canvas);
+    const serverX = this._display.absX(pos.x);
+    const serverY = this._display.absY(pos.y);
+
+    // Normalize pixel deltas from deltaMode
+    let dX = ev.deltaX;
+    let dY = ev.deltaY;
+    if (ev.deltaMode === 1) {           // DOM_DELTA_LINE
+        dX *= 19;
+        dY *= 19;
+    } else if (ev.deltaMode === 2) {    // DOM_DELTA_PAGE
+        dX *= 19 * 24;
+        dY *= 19 * 24;
+    }
+
+    // Tier 1: integer line steps (at least ±1 when non-zero)
+    let lineX = 0, lineY = 0;
+    if (dX !== 0) {
+        lineX = dX > 0 ? Math.max(1, Math.round(dX / 10))
+                       : Math.min(-1, Math.round(dX / 10));
+    }
+    if (dY !== 0) {
+        lineY = dY > 0 ? Math.max(1, Math.round(dY / 10))
+                       : Math.min(-1, Math.round(dY / 10));
+    }
+
+    // Float line deltas for compact scroll (sub-type 8)
+    const scrollX = dX / 10;
+    const scrollY = dY / 10;
+
+    // Tier 2: 16.16 fixed-point line deltas
+    const fixedX = Math.round(scrollX * 65536) | 0;
+    const fixedY = Math.round(scrollY * 65536) | 0;
+
+    // Tier 3: pixel-precise integer deltas
+    const pointX = Math.round(dX) | 0;
+    const pointY = Math.round(dY) | 0;
+
+    // Discrete mouse wheel: no phase tracking
+    const scrollPhase = 0;
+    const momentumPhase = 0;
+    const flags = 0x0000;
+
+    // Send pair: sub-type 8 (compact) then sub-type 11 (detailed)
+    RFB.messages.ardGestureCompactScroll(
+        this._sock, scrollX, scrollY,
+        scrollPhase, momentumPhase, serverX, serverY);
+    RFB.messages.ardGestureScrollWheel(
+        this._sock, lineX, lineY,
+        fixedX, fixedY, pointX, pointY,
+        scrollPhase, momentumPhase, flags, serverX, serverY);
+};
+
 // ===================================================================
 //  LAYER 2b: RSATunnel Auth (Type 33) — Issue #8
 // ===================================================================
@@ -2087,6 +2156,78 @@ RFB.messages.ardClipboardSend = function (sock, format, sessionId, zlibData, unc
     sock.sQpush32(uncompSize);
     sock.sQpush32(zlibData.length);
     sock.sQpushBytes(zlibData);
+    sock.flush();
+};
+
+// GestureEvent sub-type 8: CompactScroll (36 bytes total)
+// [0x17][0x00][u16be 32][u16be 2][u16be 8]
+// [f32be scrollX][f32be scrollY][f32be 0][u32be 1]
+// [u32be scrollPhase][u32be momentumPhase][u16be x][u16be y]
+RFB.messages.ardGestureCompactScroll = function (sock, scrollX, scrollY,
+                                                  scrollPhase, momentumPhase,
+                                                  x, y) {
+    // 8-byte header
+    sock.sQpush8(msgTypeGestureEvent);   // 0x17
+    sock.sQpush8(0);                      // padding
+    sock.sQpush16(32);                    // payloadSize
+    sock.sQpush16(2);                     // version
+    sock.sQpush16(8);                     // sub-type: CompactScroll
+
+    // 28-byte payload with f32be floats via DataView
+    const buf = new Uint8Array(28);
+    const dv = new DataView(buf.buffer);
+    dv.setFloat32(0, scrollX, false);
+    dv.setFloat32(4, scrollY, false);
+    dv.setFloat32(8, 0, false);            // scrollZ
+    dv.setUint32(12, 1, false);            // scrollCount
+    dv.setUint32(16, scrollPhase, false);
+    dv.setUint32(20, momentumPhase, false);
+    dv.setUint16(24, x, false);
+    dv.setUint16(26, y, false);
+    sock.sQpushBytes(buf);
+    // Do NOT flush — sub-type 11 follows
+};
+
+// GestureEvent sub-type 11: ScrollWheel (58 bytes total)
+// [0x17][0x00][u16be 54][u16be 1][u16be 11]
+// [i16be dX][i16be dY][i16be 0]
+// [i32be fixedX][i32be fixedY][i32be 0]
+// [i32be ptX][i32be ptY][i32be 0]
+// [u32be scrollPhase][u32be momentumPhase]
+// [u32be 0][u16be 0][u16be flags][u16be x][u16be y]
+RFB.messages.ardGestureScrollWheel = function (sock, deltaX, deltaY,
+                                                fixedPtDeltaX, fixedPtDeltaY,
+                                                pointDeltaX, pointDeltaY,
+                                                scrollPhase, momentumPhase,
+                                                flags, x, y) {
+    // 8-byte header
+    sock.sQpush8(msgTypeGestureEvent);   // 0x17
+    sock.sQpush8(0);                      // padding
+    sock.sQpush16(54);                    // payloadSize
+    sock.sQpush16(1);                     // version
+    sock.sQpush16(11);                    // sub-type: ScrollWheel
+
+    // 50-byte payload with signed fields via DataView
+    const buf = new Uint8Array(50);
+    const dv = new DataView(buf.buffer);
+    dv.setInt16(0, deltaX, false);
+    dv.setInt16(2, deltaY, false);
+    dv.setInt16(4, 0, false);              // deltaZ
+    dv.setInt32(6, fixedPtDeltaX, false);
+    dv.setInt32(10, fixedPtDeltaY, false);
+    dv.setInt32(14, 0, false);             // fixedPtDeltaZ
+    dv.setInt32(18, pointDeltaX, false);
+    dv.setInt32(22, pointDeltaY, false);
+    dv.setInt32(26, 0, false);             // pointDeltaZ
+    dv.setUint32(30, scrollPhase, false);
+    dv.setUint32(34, momentumPhase, false);
+    dv.setUint32(38, 0, false);            // reserved
+    dv.setUint16(42, 0, false);            // reserved
+    dv.setUint16(44, flags, false);
+    dv.setUint16(46, x, false);
+    dv.setUint16(48, y, false);
+    sock.sQpushBytes(buf);
+
     sock.flush();
 };
 
