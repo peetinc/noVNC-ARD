@@ -1473,6 +1473,11 @@ RFB.prototype._sendMouse = function (x, y, mask) {
     return _origSendMouse.call(this, x, y, mask);
 };
 
+// Pixels of wheel delta per scroll line. Purely a feel knob — raise it to
+// scroll slower, lower it to scroll faster. Tuned against Apple Screen
+// Sharing; not derived from the protocol.
+const ardScrollPixelsPerLine = 45;
+
 // Patch _handleWheel — send ARD GestureEvent (0x17) instead of VNC button masks
 RFB.prototype._handleWheel = function (ev) {
     if (!this._rfbAppleARD) {
@@ -1511,17 +1516,17 @@ RFB.prototype._handleWheel = function (ev) {
     // Tier 1: integer line steps (at least ±1 when non-zero)
     let lineX = 0, lineY = 0;
     if (dX !== 0) {
-        lineX = dX > 0 ? Math.max(1, Math.round(dX / 30))
-                       : Math.min(-1, Math.round(dX / 30));
+        lineX = dX > 0 ? Math.max(1, Math.round(dX / ardScrollPixelsPerLine))
+                       : Math.min(-1, Math.round(dX / ardScrollPixelsPerLine));
     }
     if (dY !== 0) {
-        lineY = dY > 0 ? Math.max(1, Math.round(dY / 30))
-                       : Math.min(-1, Math.round(dY / 30));
+        lineY = dY > 0 ? Math.max(1, Math.round(dY / ardScrollPixelsPerLine))
+                       : Math.min(-1, Math.round(dY / ardScrollPixelsPerLine));
     }
 
     // Float line deltas for compact scroll (sub-type 8)
-    const scrollX = dX / 30;
-    const scrollY = dY / 30;
+    const scrollX = dX / ardScrollPixelsPerLine;
+    const scrollY = dY / ardScrollPixelsPerLine;
 
     // Tier 2: 16.16 fixed-point line deltas
     const fixedX = Math.round(scrollX * 65536) | 0;
