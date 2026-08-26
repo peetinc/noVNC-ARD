@@ -51,24 +51,61 @@ class MessagePortChannel {
         this._port = port;
         this.binaryType = 'arraybuffer';
         this.protocol = '';
-        this.readyState = 'open';
+        this.readyState = 'connecting';
         this.onerror = () => {};
         this.onmessage = () => {};
         this.onopen = () => {};
         this.onclose = () => {};
 
+        // WebSocket contract: 'message' NEVER fires before 'open'. The parent
+        // opened the byte stream seconds before this iframe attached, so the
+        // server's first bytes (the RFB version greeting) are already queued
+        // on the port and would otherwise dispatch the instant we set
+        // onmessage — hitting RFB while its init state is still empty
+        // ("Unknown init state"). Buffer until fireOpen() flushes.
+        this._preOpen = [];
+        this._pendingClose = null;
+
         port.onmessage = (ev) => {
             if (ev.data instanceof ArrayBuffer) {
+                if (this.readyState !== 'open') {
+                    this._preOpen.push(ev.data);
+                    return;
+                }
                 this.onmessage({ data: ev.data });
                 return;
             }
             if (ev.data && ev.data.type === 'close') {
                 Log.Info('msgport: parent closed transport: ' + (ev.data.reason || ''));
+                if (this.readyState !== 'open') {
+                    this._pendingClose = ev.data.reason || 'transport closed';
+                    return;
+                }
                 this.readyState = 'closed';
                 this.onclose({ code: 1000, reason: ev.data.reason || 'transport closed' });
             }
         };
         port.start?.();
+    }
+
+    /** Transition to open, then flush anything the parent sent early —
+     *  in order, and after onopen so RFB is in `connecting` state first. */
+    fireOpen() {
+        if (this.readyState !== 'connecting') return;
+        this.readyState = 'open';
+        this.onopen();
+        for (const ab of this._preOpen.splice(0)) {
+            if (this.readyState !== 'open') return; // handler closed us mid-flush
+            this.onmessage({ data: ab });
+        }
+        if (this._pendingClose !== null) {
+            const reason = this._pendingClose;
+            this._pendingClose = null;
+            if (this.readyState === 'open') {
+                this.readyState = 'closed';
+                this.onclose({ code: 1000, reason });
+            }
+        }
     }
 
     send(data) {
@@ -100,9 +137,10 @@ Websock.prototype.open = function (uri, protocols) {
         nextPort().then((port) => {
             const chan = new MessagePortChannel(port);
             this.attach(chan);
-            // attach() wires onopen but a MessagePort has no async handshake —
-            // fire it on the next tick so RFB's handlers are installed first.
-            setTimeout(() => chan.onopen(), 0);
+            // attach() wires the handlers; fireOpen() transitions the channel
+            // and flushes any bytes the parent buffered before this moment.
+            // Next tick so the RFB constructor's own wiring completes first.
+            setTimeout(() => chan.fireOpen(), 0);
         });
         return;
     }
