@@ -36,6 +36,7 @@
         // Import and apply the ARD patch BEFORE anything creates RFB instances.
         // The patch modifies RFB.prototype, so all future instances get ARD support.
         import './ard/ard-patch.js';
+        import './ard/msgport-transport.js';
 
         import UI from "./noVNC/app/ui.js";
         import * as Log from './noVNC/core/util/logging.js';
