@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { TierController, DOWN_MIN_GAP_MS } from '../hp/rate-tier.js';
+import { TierController, DOWN_MIN_GAP_MS, UP_LOSS_PCT } from '../hp/rate-tier.js';
 
 const GOOD = { lossPct: 0, queueDelayMs: 0, videoKbit: 20000, budget: null, recovery: false };
 
@@ -22,11 +22,31 @@ describe('HP tier controller', () => {
     });
 
     it('steps down on loss, delay and recovery to 0.75 x tier', () => {
-        for (const over of [{ lossPct: 4 }, { queueDelayMs: 200 }, { recovery: true }]) {
+        for (const over of [{ lossPct: 4 }, { queueDelayMs: 200, lossPct: UP_LOSS_PCT },
+                            { recovery: true }]) {
             const c = new TierController({});
             assert.equal(c.sample({ now: 1000, ...GOOD, ...over }), 12000);
             assert.equal(c.tier, 12000);
         }
+    });
+
+    // The delay reading is arrival minus the Mac's RTP time, so a Mac clock
+    // or stamping that runs slow reads as a standing queue (about 1.5 s seen
+    // with a clean path). Delay steps down only when the path shows stress.
+    it('delay alone on a clean path does not step down', () => {
+        const c = new TierController({});
+        const { changes } = run(c, 0, 30, { queueDelayMs: 1500, lossPct: 0.8 });
+        assert.deepEqual(changes, []);
+        assert.equal(c.tier, 16000);
+    });
+
+    it('delay steps down with loss or a limiting budget behind it', () => {
+        const withLoss = new TierController({});
+        assert.equal(withLoss.sample({ now: 1000, ...GOOD, queueDelayMs: 200, lossPct: UP_LOSS_PCT }), 12000);
+        // A limiting budget too high to trip on its own still confirms the queue.
+        const withBudget = new TierController({});
+        assert.equal(withBudget.sample({ now: 1000, ...GOOD, queueDelayMs: 200,
+            budget: { kbit: 20000, limiting: true } }), 12000);
     });
 
     it('a limiting budget lowers the target to 0.85 x budget', () => {

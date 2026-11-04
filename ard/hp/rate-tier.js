@@ -9,9 +9,12 @@
  * payload bytes only), the latest agent budget {kbit, limiting} or null,
  * and a recovery flag.
  *
- * Down: loss, queuing delay, recovery, or a limiting budget below
- * BUDGET_DOWN x tier -> the highest tier <= min(0.75 x tier,
- * BUDGET_TARGET x budget), at most one per DOWN_MIN_GAP_MS.
+ * Down: loss, recovery, a limiting budget below BUDGET_DOWN x tier, or
+ * queuing delay with stress behind it (loss >= UP_LOSS_PCT or any limiting
+ * budget) -> the highest tier <= min(0.75 x tier, BUDGET_TARGET x budget),
+ * at most one per DOWN_MIN_GAP_MS. Delay alone is no evidence: it is arrival
+ * minus the Mac's RTP time, and a Mac clock or stamping that runs slow reads
+ * as a standing queue on a clean path.
  * Up: one step after UP_HOLD_MS with no trigger and loss < UP_LOSS_PCT, with
  * video at least UP_LOAD_FRACTION x tier for UP_LOAD_SECONDS of that time
  * (an idle screen proves nothing), and only while the agent budget is absent
@@ -70,8 +73,9 @@ export class TierController {
         const limiting = budget !== null && budget.limiting === true;
         const budgetKbit = limiting && Number.isFinite(budget.kbit) ? budget.kbit : null;
         const budgetTrips = budgetKbit !== null && budgetKbit < BUDGET_DOWN * this._tier;
+        const stressed = limiting || lossPct >= UP_LOSS_PCT;
         const trigger = budgetTrips || recovery ||
-            lossPct > DOWN_LOSS_PCT || queueDelayMs > DOWN_DELAY_MS;
+            lossPct > DOWN_LOSS_PCT || (queueDelayMs > DOWN_DELAY_MS && stressed);
 
         if (trigger) {
             this._lastTriggerAt = now;

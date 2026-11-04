@@ -9,7 +9,7 @@ import { describe, it } from 'node:test';
 import { strictEqual, ok, deepStrictEqual } from 'node:assert';
 
 import { ReceiveStats, DELAY_MIN_SAMPLES } from '../hp/receive-stats.js';
-import { TierController, DOWN_DELAY_MS } from '../hp/rate-tier.js';
+import { TierController, DOWN_DELAY_MS, UP_LOSS_PCT } from '../hp/rate-tier.js';
 
 const VIDEO = 90000;
 const SSRC = 0x1234;
@@ -47,9 +47,9 @@ function pictureSender(stats, ssrc = SSRC) {
 const onTime = n => n * PICTURE_MS + TRANSIT_MS;
 
 // Samples the controller from the window at `now`; collects its changes.
-function sampleInto(ctl, stats, now, changes) {
+function sampleInto(ctl, stats, now, changes, over = {}) {
     const w = stats.window(now);
-    const r = ctl.sample({ now, ...w, videoKbit: 20000 });
+    const r = ctl.sample({ now, ...w, videoKbit: 20000, ...over });
     if (r !== null) changes.push(r);
     return w;
 }
@@ -257,7 +257,7 @@ describe('ReceiveStats window', () => {
         strictEqual(ctl.tier, 16000);
     });
 
-    it('a second of pictures all 200 ms late is a queue, and steps down', () => {
+    it('a second of pictures all 200 ms late is a queue, and steps down with loss behind it', () => {
         const stats = new ReceiveStats();
         const send = pictureSender(stats);
         const ctl = new TierController({});
@@ -268,13 +268,33 @@ describe('ReceiveStats window', () => {
             const at = onTime(n) + 200;
             if (firstLate === null) firstLate = at;
             send(n, at);
-            sampleInto(ctl, stats, at, changes);
+            sampleInto(ctl, stats, at, changes, { lossPct: UP_LOSS_PCT });
             if (downAt === null && changes.length > 0) downAt = at;
         }
         deepStrictEqual(changes, [12000]);
         // Not before the on-time pictures have left the last second.
         ok(downAt - onTime(599) > 1000, 'down ' + (downAt - onTime(599)) + ' ms after the last on-time picture');
         ok(Math.abs(stats.window(onTime(679) + 200).queueDelayMs - 200) < 1);
+    });
+
+    // Pictures 15% further apart in arrival than in RTP time: a Mac clock or
+    // stamping that runs slow, on a path with no queue at all. It reads as a
+    // growing delay (the field saw about 1.5 s); without loss or a limiting
+    // budget behind it, it must not step down.
+    it('a slow Mac RTP clock reads as delay but does not step down', () => {
+        const stats = new ReceiveStats();
+        const send = pictureSender(stats);
+        const ctl = new TierController({});
+        const changes = [];
+        let worst = 0;
+        for (let n = 0; n < 1800; n++) {
+            const at = n * PICTURE_MS * 1.15 + TRANSIT_MS;
+            send(n, at);
+            worst = Math.max(worst, sampleInto(ctl, stats, at, changes).queueDelayMs);
+        }
+        ok(worst > 1000, 'skew reads as delay, ' + worst + ' ms');
+        // Over 30 s of loaded clean path the controller may step up; never down.
+        ok(changes.every(t => t > 16000), 'changes ' + changes);
     });
 
     it('is not fooled by the 32-bit timestamp wrapping', () => {
